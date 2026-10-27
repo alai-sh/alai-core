@@ -91,6 +91,17 @@ jobs:
         with:
           persist-credentials: false
 
+      # C: is slower than RUNNER_TEMP's drive on Windows runners
+      - name: "Move Rust off C:"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cargo = Join-Path $env:RUNNER_TEMP cargo
+          Copy-Item -Recurse (Join-Path $env:USERPROFILE .cargo bin) (Join-Path $cargo bin)
+          "CARGO_HOME=$cargo" >> $env:GITHUB_ENV
+          "RUSTUP_HOME=$(Join-Path $env:RUNNER_TEMP rustup)" >> $env:GITHUB_ENV
+          Join-Path $cargo bin >> $env:GITHUB_PATH
+
       - name: Run the crate's tests
         run: |
           rustup toolchain install
@@ -204,6 +215,17 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           cache-suffix: wheels-${{ matrix.platform.name }}
+
+      # C: is slower than RUNNER_TEMP's drive on Windows runners
+      - name: "Move Rust off C:"
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $cargo = Join-Path $env:RUNNER_TEMP cargo
+          Copy-Item -Recurse (Join-Path $env:USERPROFILE .cargo bin) (Join-Path $cargo bin)
+          "CARGO_HOME=$cargo" >> $env:GITHUB_ENV
+          "RUSTUP_HOME=$(Join-Path $env:RUNNER_TEMP rustup)" >> $env:GITHUB_ENV
+          Join-Path $cargo bin >> $env:GITHUB_PATH
 
       - name: Install Pythons on non-Linux hosts
         if: runner.os != 'Linux'

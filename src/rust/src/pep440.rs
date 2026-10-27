@@ -8,7 +8,7 @@ use crate::{repr, value_error};
 
 #[pyclass(frozen, eq, ord, hash, name = "Version", module = "alai_core.pep440")]
 #[derive(Clone, PartialEq, PartialOrd, Hash)]
-pub(crate) struct Version(pep440::Version);
+pub(crate) struct Version(pub(crate) pep440::Version);
 
 #[pymethods]
 impl Version {
@@ -48,7 +48,7 @@ impl Version {
 
 #[pyclass(frozen, eq, hash, name = "SpecifierSet", module = "alai_core.pep440")]
 #[derive(PartialEq, Hash)]
-pub(crate) struct SpecifierSet(pep440::SpecifierSet);
+pub(crate) struct SpecifierSet(pub(crate) pep440::SpecifierSet);
 
 #[pymethods]
 impl SpecifierSet {

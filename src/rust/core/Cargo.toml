@@ -8,3 +8,4 @@ publish = false
 
 [dependencies]
 semver = "1.0.28"
+serde_json = "1"

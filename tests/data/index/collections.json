@@ -1,0 +1,21 @@
+{
+  "v": 1,
+  "namespaces": {
+    "alai_example": {
+      "demo": {
+        "updated": "2026-09-20T09:00:00Z",
+        "sha256": "1949ee54c0f5768bdec50620fa7bf6fea46911309b03668a2605530885048484"
+      }
+    },
+    "community": {
+      "general": {
+        "updated": "2026-10-05T17:30:02Z",
+        "sha256": "c5a8e09e5cabc31ee287f10127150755efadb38c6c7db9d6e7c4cb5a423cb664"
+      },
+      "library_inventory_filtering_v1": {
+        "updated": "2025-10-25T11:31:55Z",
+        "sha256": "1a8f72ed6864e4da80374e9b3293a32c5915dcafd9a19a1da0a0a541914c5456"
+      }
+    }
+  }
+}

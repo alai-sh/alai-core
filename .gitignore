@@ -1,0 +1,9 @@
+dist/
+__pycache__/
+.venv/
+.coverage*
+coverage.xml
+.tox/
+src/alai_core/*.so
+src/alai_core/*.pyd
+/target/

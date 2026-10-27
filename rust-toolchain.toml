@@ -1,0 +1,5 @@
+# Also read by maturin-action inside the build containers.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

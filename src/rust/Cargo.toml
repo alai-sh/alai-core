@@ -1,0 +1,16 @@
+[package]
+name = "alai-core-py"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+alai-core = { path = "core" }
+# extension-module is enabled by maturin rather than here, so cargo test can still link libpython.
+pyo3 = { version = "0.30", features = ["abi3-py310", "abi3t-py315"] }

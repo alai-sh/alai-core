@@ -1,6 +1,9 @@
 // Copyright: (c) 2026, Jordan Borean (@jborean93) <jborean93@gmail.com>
 // MIT License (see LICENSE or https://opensource.org/licenses/MIT)
 
+pub mod index;
+mod json;
+mod names;
 pub mod pep440;
 pub mod semver;
 mod text;

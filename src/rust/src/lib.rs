@@ -1,6 +1,7 @@
 // Copyright: (c) 2026, Jordan Borean (@jborean93) <jborean93@gmail.com>
 // MIT License (see LICENSE or https://opensource.org/licenses/MIT)
 
+mod index;
 mod pep440;
 mod semver;
 
@@ -18,6 +19,12 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("SemverVersionReq", py.get_type::<semver::VersionReq>())?;
     m.add("Pep440Version", py.get_type::<pep440::Version>())?;
     m.add("Pep440SpecifierSet", py.get_type::<pep440::SpecifierSet>())?;
+    m.add("IndexConfig", py.get_type::<index::Config>())?;
+    m.add("IndexCollections", py.get_type::<index::Collections>())?;
+    m.add("IndexCollectionEntry", py.get_type::<index::CollectionEntry>())?;
+    m.add("IndexCollectionIndex", py.get_type::<index::CollectionIndex>())?;
+    m.add("IndexCollectionVersion", py.get_type::<index::CollectionVersion>())?;
+    m.add("NewerFormatError", py.get_type::<index::NewerFormatError>())?;
     Ok(())
 }
 

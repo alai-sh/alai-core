@@ -9,7 +9,7 @@ use crate::{repr, value_error};
 
 #[pyclass(frozen, eq, ord, hash, name = "Version", module = "alai_core.semver")]
 #[derive(Clone, PartialEq, PartialOrd, Hash)]
-pub(crate) struct Version(semver::Version);
+pub(crate) struct Version(pub(crate) semver::Version);
 
 #[pymethods]
 impl Version {
@@ -39,7 +39,7 @@ impl Version {
 
 #[pyclass(frozen, eq, hash, name = "VersionReq", module = "alai_core.semver")]
 #[derive(PartialEq, Hash)]
-pub(crate) struct VersionReq(semver::VersionReq);
+pub(crate) struct VersionReq(pub(crate) semver::VersionReq);
 
 #[pymethods]
 impl VersionReq {

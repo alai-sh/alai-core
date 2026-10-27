@@ -66,7 +66,7 @@ exclude = ["tests"]
 reportAny = false
 # typing.override needs 3.12.
 reportImplicitOverride = false
-# The built extension only exists in src/ after uv sync; its stub is what's checked.
+# The built extension only exists in src/ after uv sync, so its stub is what's checked.
 reportMissingModuleSource = false
 reportPrivateUsage = false
 reportUnannotatedClassAttribute = false

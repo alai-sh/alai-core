@@ -14,3 +14,4 @@ crate-type = ["cdylib"]
 alai-core = { path = "core" }
 # extension-module is enabled by maturin rather than here, so cargo test can still link libpython.
 pyo3 = { version = "0.30", features = ["abi3-py310", "abi3t-py315"] }
+serde_json = "1"

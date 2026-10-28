@@ -7,5 +7,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
+memchr = "2"
 semver = "1.0.28"
 serde_json = "1"

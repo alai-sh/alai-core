@@ -10,3 +10,4 @@ publish = false
 memchr = "2"
 semver = "1.0.28"
 serde_json = "1"
+toml_edit = "0.25.17"

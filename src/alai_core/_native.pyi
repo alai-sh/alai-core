@@ -2,12 +2,28 @@
 # MIT License (see LICENSE or https://opensource.org/licenses/MIT)
 
 import collections.abc as _c
+import os
 
 class SemverVersion:
-    """A collection version, SemVer 2.0.0 kept as written. Versions are equal by text. They're ordered by precedence
-    and then by text, so two that differ only in build metadata still have an order."""
+    """A collection version, SemVer 2.0.0 kept as written.
 
-    def __init__(self, text: str, /) -> None: ...
+    Versions are equal by text. They're ordered by precedence and then by text, so two that differ only in build
+    metadata still have an order.
+
+    Example:
+        >>> sorted([SemverVersion("1.0.0"), SemverVersion("1.0.0-rc.1"), SemverVersion("0.9.0")])
+        [Version('0.9.0'), Version('1.0.0-rc.1'), Version('1.0.0')]
+    """
+
+    def __init__(self, text: str, /) -> None:
+        """Read a version.
+
+        Args:
+            text: The version, such as ``1.2.3`` or ``1.2.3-rc.1+build``.
+
+        Raises:
+            ValueError: It isn't a semantic version.
+        """
     @property
     def text(self) -> str:
         """As written, build metadata included."""
@@ -22,34 +38,85 @@ class SemverVersion:
     def __ge__(self, other: SemverVersion, /) -> bool: ...
 
 class SemverVersionReq:
-    """The versions a requirement accepts. Every clause must hold, and no clauses accepts any version. Requirements are
-    equal by clauses, so ``>= 1`` and ``>=1.0.0`` are the same requirement.
+    """The versions a requirement accepts.
 
-    ``SemverVersionReq(text)`` reads ``alai.toml``'s strict form. That's ``*``, or comma-separated clauses of an
-    operator (``==``, ``!=``, ``>=``, ``<=``, ``>``, ``<``) and a version that may leave out its minor and patch
-    parts."""
+    Every clause must hold, and no clauses accepts any version. Requirements are equal by clauses, so ``>= 1`` and
+    ``>=1.0.0`` are the same requirement.
 
-    def __init__(self, text: str, /) -> None: ...
+    Example:
+        >>> SemverVersionReq(">=1.0, <2").contains(SemverVersion("1.5.0"))
+        True
+    """
+
+    def __init__(self, text: str, /) -> None:
+        """Read a requirement in ``alai.toml``'s strict form.
+
+        That's ``*``, or comma-separated clauses of an operator (``==``, ``!=``, ``>=``, ``<=``, ``>``, ``<``) and a
+        version that may leave out its minor and patch parts.
+
+        Args:
+            text: The requirement, such as ``>=9.1,<10``.
+
+        Raises:
+            ValueError: It isn't a requirement in this form. The message says what to write instead.
+        """
     @classmethod
     def from_galaxy(cls, text: str, /) -> SemverVersionReq:
-        """A requirement as ansible-galaxy reads one, as an index's ``deps[].req`` and ``MANIFEST.json`` hold them.
-        There's no whitespace, a bare version means ``==``, and ``*`` as any clause matches anything. Versions are
-        read loosely and then cut to three parts, so ``1.2.3.4`` means ``1.2.3``."""
+        """Read a requirement as ansible-galaxy reads one, as an index's ``deps[].req`` and ``MANIFEST.json`` hold them.
+
+        There's no whitespace, a bare version means ``==``, and ``*`` as any clause matches anything. Versions are read
+        loosely and then cut to three parts.
+
+        Args:
+            text: The requirement.
+
+        Returns:
+            The requirement.
+
+        Raises:
+            ValueError: ansible-galaxy couldn't read it either, such as ``^3.0.0``.
+
+        Example:
+            >>> SemverVersionReq.from_galaxy("1.2.3.4").clauses
+            (('==', Version('1.2.3')),)
+        """
     @property
     def text(self) -> str:
         """As written, for messages."""
     @property
     def clauses(self) -> tuple[tuple[str, SemverVersion], ...]:
         """``(operator, version)`` pairs, with ansible-galaxy's ``=`` and bare versions as ``==``."""
-    def contains(self, version: SemverVersion, /) -> bool: ...
+    def contains(self, version: SemverVersion, /) -> bool:
+        """Whether a version meets every clause.
+
+        Args:
+            version: The version.
+
+        Returns:
+            True if it does. Precedence is compared, so build metadata is ignored.
+        """
     def __eq__(self, other: object, /) -> bool: ...
     def __hash__(self) -> int: ...
 
 class Pep440Version:
-    """A PEP 440 version, such as ``2.19.0`` or ``2.19.0rc1``. Equal when they compare equal, so ``1.0`` is
-    ``1.0.0``."""
+    """A PEP 440 version, such as ``2.19.0`` or ``2.19.0rc1``.
 
-    def __init__(self, text: str, /) -> None: ...
+    Versions are equal when they compare equal, so ``1.0`` is ``1.0.0``.
+
+    Example:
+        >>> Pep440Version("2.19.0rc1").base
+        Version('2.19.0')
+    """
+
+    def __init__(self, text: str, /) -> None:
+        """Read a version.
+
+        Args:
+            text: The version.
+
+        Raises:
+            ValueError: It isn't a PEP 440 version, or has a local part such as ``+local``.
+        """
     @property
     def text(self) -> str:
         """As written, without surrounding whitespace."""
@@ -70,33 +137,76 @@ class Pep440Version:
     def __ge__(self, other: Pep440Version, /) -> bool: ...
 
 class Pep440SpecifierSet:
-    """Comma-separated specifiers, all of which must hold, such as ``>=2.17,<2.20``."""
+    """Comma-separated specifiers, all of which must hold, such as ``>=2.17,<2.20``.
 
-    def __init__(self, text: str, /) -> None: ...
+    Example:
+        >>> Pep440SpecifierSet(">=2.19").contains(Pep440Version("2.19.0rc1"))
+        True
+    """
+
+    def __init__(self, text: str, /) -> None:
+        """Read a specifier set. Empty items are skipped, so ``>=2.17,`` is ``>=2.17``.
+
+        Args:
+            text: The specifiers, such as a collection's ``requires_ansible``.
+
+        Raises:
+            ValueError: A specifier isn't valid.
+        """
     @property
     def text(self) -> str:
         """As written, for messages."""
     def contains(self, version: Pep440Version, /) -> bool:
-        """Whether ansible-core ``version`` meets every specifier. It's compared as ansible-core does, by its base
-        version, so ``2.19.0rc1`` meets ``>=2.19``."""
+        """Whether an ansible-core version meets every specifier, compared as ansible-core does, by its base version.
+
+        Args:
+            version: The ansible-core version.
+
+        Returns:
+            True if its base version does, so ``2.19.0rc1`` meets ``>=2.19``.
+        """
     def admits_lower_bound(self, other: Pep440SpecifierSet, /) -> bool:
-        """Whether this set starts no later than ``other``, by lower bounds alone. A collection's ``requires_ansible``
-        admits the project's when it does. Either set without a lower bound admits the other."""
+        """Whether this set starts no later than another, by lower bounds alone.
+
+        A collection's ``requires_ansible`` admits the project's when it does.
+
+        Args:
+            other: The set to compare with.
+
+        Returns:
+            True if it does, or if either set has no lower bound.
+        """
     def narrower_than(self, other: Pep440SpecifierSet, /) -> bool:
-        """Whether this set's upper bound ends inside ``other``'s range, so ``other`` reaches versions this one
-        doesn't."""
+        """Whether this set's upper bound ends inside another's range.
+
+        Args:
+            other: The set to compare with.
+
+        Returns:
+            True if ``other`` reaches versions this one doesn't.
+        """
     def __eq__(self, other: object, /) -> bool: ...
     def __hash__(self) -> int: ...
 
 class NewerFormatError(ValueError):
-    """A file needs a newer reader. ``found`` lists the formats or versions it offers, and ``supported`` is the newest
-    read."""
+    """A file needs a newer reader.
+
+    Attributes:
+        found: The formats or versions the file offers.
+        supported: The newest this reads.
+    """
 
     found: tuple[int, ...]
     supported: int
 
 class IndexConfig:
-    """An index's ``config.json``, with its paths as given, relative to the index root."""
+    """An index's ``config.json``, with its paths as given, relative to the index root.
+
+    Example:
+        >>> config = IndexConfig(index="index/{namespace}/{name}.jsonl", dl="https://dl.example/{sha256-checksum}")
+        >>> config.index_path(name="community.general")
+        'index/community/general.jsonl'
+    """
 
     def __init__(
         self,
@@ -106,10 +216,33 @@ class IndexConfig:
         collections: str | None = None,
         plugins: str | None = None,
         moved_to: str | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Make a config to write.
+
+        Args:
+            index: The template for each collection's index file.
+            dl: The template for artifact URLs.
+            collections: Where ``collections.json`` is, or None for an index with no listing.
+            plugins: Where the plugin index is, or None for an index with none.
+            moved_to: The index root the index has moved to, or None.
+
+        Raises:
+            ValueError: A template is invalid, or the index template finds files by SHA-256 with no listing.
+        """
     @classmethod
     def parse(cls, data: bytes, /) -> IndexConfig:
-        """The highest format offered that's supported. Raises ``NewerFormatError`` if every one is newer."""
+        """Read ``config.json``, choosing the highest format offered that's supported.
+
+        Args:
+            data: The file.
+
+        Returns:
+            The config.
+
+        Raises:
+            NewerFormatError: Every format offered is newer than this reads.
+            ValueError: The file isn't valid.
+        """
     @property
     def format(self) -> int:
         """The highest format number offered that's supported."""
@@ -132,20 +265,56 @@ class IndexConfig:
     def hashed(self) -> bool:
         """Whether index files are found by their SHA-256, which only ``collections.json`` gives."""
     def index_path(self, *, name: str, sha256: str | None = None) -> str:
-        """Where collection ``name``'s index file is, relative to the index root.
+        """Where a collection's index file is, relative to the index root.
 
-        ``sha256`` is the SHA-256 of the index file itself, from its entry in ``collections.json``. When ``hashed`` is
-        True it's required, and leaving it out raises ValueError. Otherwise the template doesn't use it, and it's
-        ignored."""
+        Args:
+            name: The collection's full name, such as ``community.general``.
+            sha256: The SHA-256 of the index file itself, from its entry in ``collections.json``. Required when
+                ``hashed`` is True. Otherwise the template doesn't use it, and it's ignored.
+
+        Returns:
+            The path, with the template filled in.
+
+        Raises:
+            ValueError: The name isn't a valid collection name, or ``hashed`` is True and ``sha256`` is None.
+        """
     def artifact_path(self, *, name: str, version: SemverVersion, sha256: str) -> str:
-        """Where an artifact is, from the ``dl`` template. ``sha256`` is the artifact's, as an index line gives it."""
-    def to_json(self) -> str: ...
+        """Where an artifact is, from the ``dl`` template.
+
+        Args:
+            name: The collection's full name.
+            version: The version, percent-encoded into the URL.
+            sha256: The artifact's SHA-256, as an index line gives it.
+
+        Returns:
+            The URL, with the template filled in.
+
+        Raises:
+            ValueError: The name isn't a valid collection name.
+
+        Example:
+            >>> IndexConfig(index="i/{namespace}/{name}", dl="{namespace}/{name}/{version}.tar.gz").artifact_path(
+            ...     name="ns.coll", version=SemverVersion("1.0.0+b"), sha256="a" * 64
+            ... )
+            'ns/coll/1.0.0%2Bb.tar.gz'
+        """
+    def to_json(self) -> str:
+        """The file as galaxy-sync writes it, indented by two spaces."""
     def __eq__(self, other: object, /) -> bool: ...
 
 class IndexCollectionEntry:
     """A collection's entry in ``collections.json``."""
 
-    def __init__(self, updated: str, sha256: str | None = None) -> None: ...
+    def __init__(self, updated: str, sha256: str | None = None) -> None:
+        """Make an entry to write.
+
+        Args:
+            updated: When its index file last changed, an RFC 3339 time in UTC such as ``2026-10-05T17:30:02Z``.
+            sha256: The SHA-256 of its index file, or None.
+
+        Raises:
+            ValueError: ``updated`` isn't such a time, or ``sha256`` isn't lowercase hex.
+        """
     @property
     def updated(self) -> str:
         """When its index file last changed, or empty if the index didn't say."""
@@ -157,24 +326,49 @@ class IndexCollectionEntry:
 class IndexCollections:
     """An index's ``collections.json``, each collection's entry by ``namespace.name``."""
 
-    def __init__(self, collections: dict[str, IndexCollectionEntry], /) -> None: ...
+    def __init__(self, collections: dict[str, IndexCollectionEntry], /) -> None:
+        """Make a listing to write.
+
+        Args:
+            collections: Each collection's entry, by full name.
+
+        Raises:
+            ValueError: A name isn't a valid collection name.
+        """
     @classmethod
     def parse(cls, data: bytes, /) -> IndexCollections:
-        """A missing or malformed ``updated`` or ``sha256`` is left out rather than an error. Raises
-        ``NewerFormatError`` for a newer ``v``."""
-    def get(self, name: str, /) -> IndexCollectionEntry | None: ...
+        """Read ``collections.json``. A missing or malformed ``updated`` or ``sha256`` is left out rather than an error.
+
+        Args:
+            data: The file.
+
+        Returns:
+            The listing.
+
+        Raises:
+            NewerFormatError: Its ``v`` is newer than this reads.
+            ValueError: The file isn't valid.
+        """
+    def get(self, name: str, /) -> IndexCollectionEntry | None:
+        """A collection's entry, or None if it isn't listed."""
     def __contains__(self, name: str, /) -> bool: ...
     def __len__(self) -> int: ...
     def __iter__(self) -> _c.Iterator[str]:
         """Every collection's name, in sorted order."""
-    def to_json(self) -> str: ...
+    def to_json(self) -> str:
+        """The file as galaxy-sync writes it, indented by one space, its collections sorted.
+
+        Raises:
+            ValueError: A name or ``updated`` read leniently isn't valid to write.
+        """
     def __eq__(self, other: object, /) -> bool: ...
 
 class IndexCollectionVersion:
     """One line of an index file, one version of a collection.
 
     A dependency or ``requires_ansible`` that can't be read leaves the version unusable rather than unreadable.
-    ``problem`` says why, and ``deps`` and ``requires_ansible`` raise ValueError rather than give part of it."""
+    ``problem`` says why, and ``deps`` and ``requires_ansible`` raise ValueError rather than give part of it.
+    """
 
     def __init__(
         self,
@@ -189,7 +383,23 @@ class IndexCollectionVersion:
         yanked: bool = False,
         deprecated: bool = False,
     ) -> None:
-        """``deps`` holds each dependency's name and requirement as ``MANIFEST.json`` gave them."""
+        """Make a line to write.
+
+        Args:
+            name: The collection's full name.
+            version: The version.
+            sha256: The artifact's SHA-256, in lowercase hex.
+            size: The artifact's size in bytes.
+            published: When it was first published at its origin, an RFC 3339 time in UTC.
+            deps: Each dependency's name and requirement, as ``MANIFEST.json`` gave them.
+            requires_ansible: The ansible-core versions it supports, as ``meta/runtime.yml`` gave them, or None.
+            yanked: Whether it's yanked.
+            deprecated: Whether it's deprecated.
+
+        Raises:
+            ValueError: The name, ``sha256`` or ``published`` isn't valid. An unreadable dependency or
+                ``requires_ansible`` isn't refused here, but by ``to_json``.
+        """
     @property
     def name(self) -> str:
         """The collection's full name, such as ``community.general``."""
@@ -221,21 +431,49 @@ class IndexCollectionVersion:
     def problem(self) -> str | None:
         """Why this version can't be used, such as a dependency requirement ansible-galaxy can't read, or None."""
     def to_json(self, *, allow_unreadable: bool = False) -> str:
-        """The line as the index stores it. A line with a ``problem`` raises ValueError.
+        """The line as galaxy-sync writes it, compact and in the spec's field order.
 
-        ``allow_unreadable`` writes it anyway. Only a mirror that must publish exactly what authors published, such as
-        galaxy-sync, should set it. Any other index should have the input fixed instead."""
+        Args:
+            allow_unreadable: Write it even with a ``problem``. Only a mirror that must publish exactly what authors
+                published, such as galaxy-sync, should set it. Any other index should have the input fixed instead.
+
+        Returns:
+            The line, without a newline.
+
+        Raises:
+            ValueError: It has a ``problem`` and ``allow_unreadable`` isn't set, or a field read leniently isn't valid
+                to write.
+        """
     def __eq__(self, other: object, /) -> bool: ...
 
 class IndexCollectionIndex:
     """One collection's index file, its lines in the file's order, which is publication order rather than version
     order."""
 
-    def __init__(self, name: str, lines: _c.Sequence[IndexCollectionVersion], /) -> None: ...
+    def __init__(self, name: str, lines: _c.Sequence[IndexCollectionVersion], /) -> None:
+        """Make a file to write.
+
+        Args:
+            name: The collection's full name.
+            lines: Its lines, in the order to write them.
+
+        Raises:
+            ValueError: A line is for another collection, or a version is listed twice.
+        """
     @classmethod
     def parse(cls, data: bytes, name: str, /) -> IndexCollectionIndex:
-        """Read collection ``name``'s index file. A line that can't be read is skipped, with its number and why in
-        ``invalid``, and one whose ``v`` is newer than this reads is counted in ``newer``."""
+        """Read a collection's index file.
+
+        A line that can't be read is skipped, with its number and why in ``invalid``, and one whose ``v`` is newer than
+        this reads is counted in ``newer``.
+
+        Args:
+            data: The file.
+            name: The collection it's for, which every line must name.
+
+        Returns:
+            The file.
+        """
     @property
     def name(self) -> str:
         """The collection the file is for."""
@@ -249,7 +487,17 @@ class IndexCollectionIndex:
     def invalid(self) -> tuple[tuple[int, str], ...]:
         """Each line that couldn't be read, by number from 1, and why."""
     def to_jsonl(self, *, allow_unreadable: bool = False) -> str:
-        """The file as the index stores it, a line each, as ``CollectionVersion.to_json`` writes them."""
+        """The file as the index stores it, a line each, as ``IndexCollectionVersion.to_json`` writes them.
+
+        Args:
+            allow_unreadable: As for ``IndexCollectionVersion.to_json``.
+
+        Returns:
+            The file, each line ending in a newline.
+
+        Raises:
+            ValueError: As for ``IndexCollectionVersion.to_json``.
+        """
 
 class PluginEntry:
     """One line of the plugin index, a plugin, role or playbook a collection has or had."""
@@ -264,11 +512,35 @@ class PluginEntry:
         until: str | None = None,
         short_description: str | None = None,
         routing: _c.Mapping[str, object] | None = None,
-    ) -> None: ...
+    ) -> None:
+        """Make a line to write.
+
+        Args:
+            type: The type, such as ``module`` or ``filter``.
+            name: The short name, such as ``user``.
+            collection: The collection that has or had it.
+            since: The lowest version of the collection that has it.
+            until: The version it was removed in, or None if the latest still has it.
+            short_description: One line from its documentation.
+            routing: Its entry in the collection's ``plugin_routing``, copied as it is.
+
+        Raises:
+            ValueError: ``type`` or ``name`` is empty, the collection name isn't valid, or ``routing`` isn't JSON.
+        """
     @classmethod
     def parse(cls, line: bytes, /) -> PluginEntry | None:
-        """The line as a plugin, or None if it can't be read or needs a newer reader. A plugin index is a search aid,
-        so a bad line is skipped rather than an error."""
+        """Read one line. A plugin index is a search aid, so a bad line is skipped rather than an error.
+
+        Args:
+            line: The line.
+
+        Returns:
+            The plugin, or None if the line can't be read or needs a newer reader.
+
+        Example:
+            >>> PluginEntry.parse(b'{"v": 1, "type": "module", "name": "copy", "collection": "ansible.builtin"}').fqcn
+            'ansible.builtin.copy'
+        """
     @property
     def type(self) -> str:
         """The type, such as ``module`` or ``filter``, which may be one this code doesn't know."""
@@ -297,17 +569,274 @@ class PluginEntry:
     def line(self) -> bytes | None:
         """The line it was read from, unknown fields included, or None if it wasn't read."""
     def to_json(self) -> str:
-        """The line as the index stores it. Keys within ``routing`` are sorted."""
+        """The line as the index stores it, compact, with the keys within ``routing`` sorted.
+
+        Raises:
+            ValueError: A collection name read leniently isn't valid to write.
+        """
     def __eq__(self, other: object, /) -> bool: ...
 
 class Plugins:
-    """A plugin index's ``plugins.jsonl``, searched without parsing the lines that can't match."""
+    """A plugin index's ``plugins.jsonl``, searched without parsing the lines that can't match.
 
-    def __init__(self, data: bytes, /) -> None: ...
+    Example:
+        >>> plugins = Plugins(b'{"v": 1, "type": "module", "name": "win_user", "collection": "ansible.windows"}\\n')
+        >>> [p.fqcn for p in plugins.search([b"user"])]
+        ['ansible.windows.win_user']
+    """
+
+    def __init__(self, data: bytes, /) -> None:
+        """Hold a plugin index to search.
+
+        Args:
+            data: The file. It's searched as it is, without being copied.
+        """
     def search(self, tokens: _c.Sequence[bytes] = ()) -> list[PluginEntry]:
-        """Every readable line that contains all of ``tokens``, or every one if there are none. The first token is
-        searched for, so it should be the rarest."""
+        """Find the lines that contain every token.
+
+        Args:
+            tokens: The bytes each line must contain. The first is searched for, so it should be the rarest.
+
+        Returns:
+            Every readable line that contains them all, or every readable line if there are none.
+        """
     def named(self, names: _c.Collection[str], /) -> list[PluginEntry]:
-        """Every readable line with a ``"name": "..."`` that's one of ``names``, found in one pass."""
+        """Find the lines for plugins with any of the given names, in one pass.
+
+        Args:
+            names: The short names.
+
+        Returns:
+            Every readable line whose ``name`` is one of them.
+        """
     def names(self) -> set[str]:
         """Every plugin's short name, read without parsing the lines, for suggestions."""
+
+class TomlError(ValueError):
+    """Text that isn't valid TOML.
+
+    ``str()`` says why and where, such as ``... (at line 3, column 7)``, the column in characters, as ``tomllib`` says
+    it.
+    """
+
+class TomlEditError(Exception):
+    """An edit ``TomlDocument`` can't make.
+
+    That's an edit to a key that isn't there or isn't the right type, or one whose text, read back, wouldn't be the
+    document with only that change made. ``str()`` says which key and why.
+    """
+
+def toml_loads(text: str, /) -> dict[str, object]:
+    """Read TOML 1.1 text as ``tomllib.loads`` reads it.
+
+    Unlike ``tomllib``, it skips a byte order mark and keeps a CRLF inside a multi-line string as written.
+
+    Args:
+        text: The TOML document.
+
+    Returns:
+        The document, tables as dicts, arrays as lists, and dates and times as ``datetime`` objects.
+
+    Raises:
+        TomlError: The text isn't valid TOML.
+
+    Example:
+        >>> toml_loads('name = "demo"\\n[project]\\ncollections = ["a.a"]\\n')
+        {'name': 'demo', 'project': {'collections': ['a.a']}}
+    """
+
+def toml_read(path: str | os.PathLike[str], /) -> dict[str, object]:
+    """Read a TOML file as ``toml_loads`` reads text, with the GIL released while it's read.
+
+    Args:
+        path: The file to read.
+
+    Returns:
+        The document, as ``toml_loads`` gives it.
+
+    Raises:
+        TomlError: The file isn't UTF-8, such as ``not UTF-8 (at line 3, column 7)``, or isn't valid TOML.
+        OSError: The file can't be read. ``filename`` is ``path``.
+    """
+
+def toml_dumps(table: _c.Mapping[str, object], /, *, width: int) -> str:
+    """Write a mapping as TOML, laid out the same way every time.
+
+    How each value is written depends on its type and where it is. Keys keep the mappings' order.
+
+    - A mapping in ``table`` is written as a ``[key]`` header line and then its own keys.
+    - A non-empty list in ``table`` whose items are all mappings gets a ``[[key]]`` header line for each item where
+      each header follows a blank line.
+    - Every other value in ``table`` is a ``key = value`` line, written before the first header.
+    - Inside a table, a mapping of only strings, numbers and booleans is an inline table, ``{ k = "v" }``. Any other
+      mapping is written as dotted keys, ``a.b.c = ...``.
+    - A list is an array, on one line if that's at most ``width`` characters, else one item per line with a trailing
+      comma.
+    - ``str``, ``int``, ``float`` and ``bool`` are TOML's string, integer, float and boolean. Anything else, ``None``
+      included, raises ``ValueError``.
+
+    Args:
+        table: The document, its keys and values as described above.
+        width: The longest an array can be on one line, in characters.
+
+    Returns:
+        The TOML text.
+
+    Raises:
+        ValueError: A value has a type TOML can't write.
+
+    Example:
+        >>> print(toml_dumps(
+        ...     {
+        ...         "version": 1,
+        ...         "tags": ["a", "b"],
+        ...         "project": {
+        ...             "name": "demo",
+        ...             "owner": {"name": "me", "admin": True},
+        ...             "source": {"git": {"url": "https://x"}},
+        ...         },
+        ...         "collection": [{"name": "a.a", "dependencies": ["b.b", "c.c"]}, {"name": "b.b"}],
+        ...     },
+        ...     width=12,
+        ... ), end="")
+        version = 1
+        tags = ["a", "b"]
+        <BLANKLINE>
+        [project]
+        name = "demo"
+        owner = { name = "me", admin = true }
+        source.git = { url = "https://x" }
+        <BLANKLINE>
+        [[collection]]
+        name = "a.a"
+        dependencies = [
+            "b.b",
+            "c.c",
+        ]
+        <BLANKLINE>
+        [[collection]]
+        name = "b.b"
+    """
+
+class TomlDocument:
+    """A TOML document being edited.
+
+    Only what's changed is rewritten. An array being edited is laid out one item per line with a trailing comma,
+    comments are kept with the lines they were on, and a document with CRLF lines keeps them.
+
+    Every edit is checked. Its text, read back, must be the document as it was with only that change made, or the edit
+    raises ``TomlEditError`` and the document is left as the last good edit had it. A path is a key path, such as
+    ``("project", "groups", "test", "collections")``, through tables, dotted keys or inline tables alike.
+
+    Example:
+        >>> doc = TomlDocument('[project]\\ncollections = [\\n    "a.a",  # pinned\\n    "c.c",\\n]\\n')
+        >>> doc.insert(("project", "collections"), 1, "b.b")
+        >>> print(doc, end="")
+        [project]
+        collections = [
+            "a.a",  # pinned
+            "b.b",
+            "c.c",
+        ]
+    """
+
+    def __init__(self, text: str, /) -> None:
+        """Read a document to edit.
+
+        Args:
+            text: The TOML document.
+
+        Raises:
+            TomlError: The text isn't valid TOML.
+        """
+    @classmethod
+    def from_path(cls, path: str | os.PathLike[str], /) -> TomlDocument:
+        """Read a TOML file to edit, as ``toml_read`` reads one, its bytes as they are so its newlines are kept.
+
+        Args:
+            path: The file to read.
+
+        Returns:
+            The document.
+
+        Raises:
+            TomlError: The file isn't UTF-8 or isn't valid TOML.
+            OSError: The file can't be read.
+        """
+    def __str__(self) -> str:
+        """The text, as given until an edit is made."""
+    def data(self) -> dict[str, object]:
+        """The document as ``toml_loads`` gives it, with the edits made."""
+    def values(self, path: _c.Sequence[str], /) -> list[str]:
+        """The array of strings at a key.
+
+        Args:
+            path: The key's path.
+
+        Returns:
+            The strings, or an empty list if there's no such key.
+
+        Raises:
+            TomlEditError: The key isn't an array of strings.
+        """
+    def insert(self, path: _c.Sequence[str], index: int, value: str, /) -> None:
+        """Insert a string into an array, creating the array if there's no such key.
+
+        A new array is created with the tables it's in. The table holding it gets a header, such as
+        ``[project.groups.test]``, after the last table before it in the document's order. The tables above it don't
+        get one.
+
+        Args:
+            path: The array's key path.
+            index: Where to insert it, as ``list.insert`` takes one.
+            value: The string.
+
+        Raises:
+            TomlEditError: The key isn't an array, something on the path isn't a table, or the edit changes more than
+                it should.
+        """
+    def replace(self, path: _c.Sequence[str], index: int, value: str, /) -> None:
+        """Replace an item in an array, keeping its comments.
+
+        Args:
+            path: The array's key path.
+            index: The item's index.
+            value: The string to put in its place.
+
+        Raises:
+            TomlEditError: There's no such array, or the edit changes more than it should.
+        """
+    def remove(self, path: _c.Sequence[str], index: int, /) -> None:
+        """Remove an item from an array.
+
+        A comment on its line goes on a line of its own, and an emptied array is ``[]``.
+
+        Args:
+            path: The array's key path.
+            index: The item's index.
+
+        Raises:
+            TomlEditError: There's no such array, or the edit changes more than it should.
+        """
+    def set_table(self, path: _c.Sequence[str], value: _c.Mapping[str, str | bool], /) -> None:
+        """Set a key to an inline table.
+
+        It's set in place, keeping a comment after it, or added at the end of its table, created as ``insert`` creates
+        one.
+
+        Args:
+            path: The key's path.
+            value: The table, in the order to write it.
+
+        Raises:
+            TomlEditError: Something on the path isn't a table, or the edit changes more than it should.
+        """
+    def remove_key(self, path: _c.Sequence[str], /) -> None:
+        """Remove a key and the comments on its line and above it, leaving its table, even if empty.
+
+        Args:
+            path: The key's path.
+
+        Raises:
+            TomlEditError: There's no such key, or the edit changes more than it should.
+        """

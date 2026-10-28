@@ -8,6 +8,7 @@ pub mod pep440;
 pub mod plugins;
 pub mod semver;
 mod text;
+pub mod toml;
 
 use std::fmt;
 

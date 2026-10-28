@@ -11,6 +11,9 @@
 - Design the API for what it does. alai-cli changes to fit it.
 - Keep `src/alai_core/_native.pyi` in step with the binding, and keep
   `gil_used = false` true.
+- Docstrings, the stub's included, are Google style (`Args:`, `Returns:`,
+  `Raises:`, `Example:`). `tests/test_stub_examples.py` runs the stub's
+  examples, so take their output from a real run.
 - Core must build and pass on Windows, though alai doesn't run there.
 - After switching `.venv` to another Python, delete
   `src/alai_core/_native*.so` (or `.pyd`).

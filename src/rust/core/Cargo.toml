@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+libyaml-safer = "0.3"
 memchr = "2"
 semver = "1.0.28"
 serde_json = "1"

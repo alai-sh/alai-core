@@ -28,6 +28,19 @@ class SemverVersion:
     def text(self) -> str:
         """As written, build metadata included."""
     @property
+    def precedence(self) -> tuple[int | tuple[int, int] | tuple[int, str], ...]:
+        """The version's SemVer precedence, which is what requirements compare, as a tuple that sorts the same way.
+
+        Build metadata isn't part of it, so ``1.0.0+a`` and ``1.0.0`` have the same precedence. A release is
+        ``(major, minor, patch, 1)``, and a pre-release ``(major, minor, patch, 0, *identifiers)``, with each
+        identifier ``(0, number)`` or ``(1, word)``, so a release sorts after its pre-releases and a number before any
+        word.
+
+        Example:
+            >>> SemverVersion("1.2.3-rc.1+b").precedence
+            (1, 2, 3, 0, (1, 'rc'), (0, 1))
+        """
+    @property
     def is_prerelease(self) -> bool:
         """Whether it has a pre-release part, such as ``-rc.1``."""
     def __eq__(self, other: object, /) -> bool: ...

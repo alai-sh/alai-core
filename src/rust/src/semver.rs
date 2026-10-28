@@ -3,7 +3,7 @@
 
 use alai_core::semver;
 use pyo3::prelude::*;
-use pyo3::types::{PyTuple, PyType};
+use pyo3::types::{PyInt, PyString, PyTuple, PyType};
 
 use crate::{repr, value_error};
 
@@ -21,6 +21,27 @@ impl Version {
     #[getter]
     fn text(&self) -> &str {
         self.0.text()
+    }
+
+    #[getter]
+    fn precedence<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        let key = self.0.precedence();
+        let (major, minor, patch) = key.release();
+        let mut parts: Vec<Bound<'py, PyAny>> = vec![
+            major.into_pyobject(py)?.into_any(),
+            minor.into_pyobject(py)?.into_any(),
+            patch.into_pyobject(py)?.into_any(),
+        ];
+        let pre: Vec<_> = key.prerelease().collect();
+        parts.push(i64::from(pre.is_empty()).into_pyobject(py)?.into_any());
+        for id in pre {
+            let pair = match id {
+                semver::Identifier::Number(digits) => (0, py.get_type::<PyInt>().call1((digits,))?),
+                semver::Identifier::Word(word) => (1, PyString::new(py, word).into_any()),
+            };
+            parts.push(pair.into_pyobject(py)?.into_any());
+        }
+        PyTuple::new(py, parts)
     }
 
     #[getter]

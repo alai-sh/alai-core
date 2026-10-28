@@ -7,7 +7,10 @@ license.workspace = true
 publish = false
 
 [dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 memchr = "2"
 semver = "1.0.28"
 serde_json = "1"
+sha2 = "0.11.1"
+tar = { version = "0.4", default-features = false }
 toml_edit = "0.25.17"

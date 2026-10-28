@@ -530,10 +530,8 @@ impl CollectionVersion {
     /// The line as the index stores it. A line with a `problem` is refused unless `allow_unreadable` is set, which
     /// only a mirror that must publish what authors published should use.
     pub fn to_json(&self, allow_unreadable: bool) -> Result<String, ParseError> {
-        if !allow_unreadable {
-            if let Some(problem) = self.problem() {
-                return Err(ParseError::new(format!("{} {}: {problem}", self.name, self.version)));
-            }
+        if !allow_unreadable && let Some(problem) = self.problem() {
+            return Err(ParseError::new(format!("{} {}: {problem}", self.name, self.version)));
         }
         check_collection_name(&self.name)?;
         check_time("published", &self.published)?;
@@ -790,7 +788,7 @@ fn check_sha256(key: &str, text: &str) -> Result<(), ParseError> {
 
 fn days_in_month(year: u32, month: u32) -> u32 {
     match month {
-        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => 29,
         2 => 28,
         4 | 6 | 9 | 11 => 30,
         _ => 31,

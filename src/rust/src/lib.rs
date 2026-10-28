@@ -5,6 +5,7 @@ mod index;
 mod pep440;
 mod plugins;
 mod semver;
+mod toml;
 
 use alai_core::ParseError;
 use pyo3::exceptions::PyValueError;
@@ -28,6 +29,12 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("NewerFormatError", py.get_type::<index::NewerFormatError>())?;
     m.add("Plugins", py.get_type::<plugins::Plugins>())?;
     m.add("PluginEntry", py.get_type::<plugins::PluginEntry>())?;
+    m.add("TomlDocument", py.get_type::<toml::TomlDocument>())?;
+    m.add("TomlError", py.get_type::<toml::TomlError>())?;
+    m.add("TomlEditError", py.get_type::<toml::TomlEditError>())?;
+    m.add_function(wrap_pyfunction!(toml::toml_loads, m)?)?;
+    m.add_function(wrap_pyfunction!(toml::toml_read, m)?)?;
+    m.add_function(wrap_pyfunction!(toml::toml_dumps, m)?)?;
     Ok(())
 }
 

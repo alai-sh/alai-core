@@ -6,8 +6,8 @@ resolver = "3"
 # Also the Python package's version, through maturin.
 version = "0.0.1"
 edition = "2024"
-# pyo3 0.30's minimum.
-rust-version = "1.85"
+# sha2 0.11's minimum, the highest of the dependencies
+rust-version = "1.88"
 license = "MIT"
 
 [profile.release]

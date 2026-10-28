@@ -612,6 +612,58 @@ class Plugins:
     def names(self) -> set[str]:
         """Every plugin's short name, read without parsing the lines, for suggestions."""
 
+class ExtractError(Exception):
+    """A tarball can't be read, or its collection can't be extracted safely. ``str()`` says why.
+
+    Attributes:
+        kind: What's wrong, one of ``corrupt``, ``missing``, ``not_file``, ``not_dir``, ``path``, ``link``,
+            ``escape``, ``unreadable``, ``checksum``, ``too_large``, ``json``, ``not_object``, ``manifest``,
+            ``manifest_fields``, ``files_list``, ``files_entry``, ``files_checksum``, ``files_special`` or
+            ``files_twice``.
+        entry: The entry it's about, or empty.
+        detail: More about it, or empty. For ``corrupt`` and ``json`` it's why, for ``link`` the link's target, for
+            ``too_large`` the limit, for ``manifest`` the collection it names, and for ``files_entry`` the entry as
+            JSON.
+    """
+
+    kind: str
+    entry: str
+    detail: str
+
+def artifact_extract(
+    tarball: str | os.PathLike[str],
+    dest: str | os.PathLike[str],
+    *,
+    limit: int = 0,
+    expected: tuple[str, str, str] | None = None,
+) -> tuple[str, str, str]:
+    """Extract a collection artifact as ``ansible-galaxy collection install`` does, with the GIL released.
+
+    Only ``MANIFEST.json``, ``FILES.json`` and what ``FILES.json`` lists are written, the last member of each name, as
+    ``tar -r`` appends a replacement. Both files and every listed entry are checked before anything is written, and
+    each file is checked against its SHA-256 as it's written. Every path and symlink must stay inside ``dest``, by name
+    and on disk, as one symlink can lead another out.
+
+    Files are ``0644``, or ``0755`` if the tarball marks them executable, and directories ``0755``, masked by the
+    process umask. On Windows, modes aren't set, and a name Windows can't hold safely, such as ``aux.py``, is
+    refused as ``path``. A symlink is made as a link to a directory or a file as ``FILES.json`` lists it. If Windows
+    won't make links, as without Developer Mode, what it points to is copied instead.
+
+    Args:
+        tarball: The artifact.
+        dest: The directory to extract it into, which mustn't exist yet.
+        limit: The most it may unpack to, in bytes, counting what a hard link copies and a symlink's checksum reads.
+            0 is no limit.
+        expected: The namespace, name and version ``MANIFEST.json`` must give, or None to take what it gives.
+
+    Returns:
+        The namespace, name and version ``MANIFEST.json`` gives.
+
+    Raises:
+        ExtractError: The tarball can't be read, or can't be extracted safely.
+        OSError: The filesystem's own error. ``filename`` is where it happened.
+    """
+
 class TomlError(ValueError):
     """Text that isn't valid TOML.
 

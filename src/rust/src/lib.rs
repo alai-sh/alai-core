@@ -1,14 +1,18 @@
 // Copyright: (c) 2026, Jordan Borean (@jborean93) <jborean93@gmail.com>
 // MIT License (see LICENSE or https://opensource.org/licenses/MIT)
 
+mod artifact;
 mod index;
 mod pep440;
 mod plugins;
 mod semver;
 mod toml;
 
+use std::io;
+use std::path::PathBuf;
+
 use alai_core::ParseError;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyOSError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyString;
 
@@ -21,6 +25,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("SemverVersionReq", py.get_type::<semver::VersionReq>())?;
     m.add("Pep440Version", py.get_type::<pep440::Version>())?;
     m.add("Pep440SpecifierSet", py.get_type::<pep440::SpecifierSet>())?;
+    m.add("ExtractError", py.get_type::<artifact::ExtractError>())?;
+    m.add_function(wrap_pyfunction!(artifact::artifact_extract, m)?)?;
     m.add("IndexConfig", py.get_type::<index::Config>())?;
     m.add("IndexCollections", py.get_type::<index::Collections>())?;
     m.add("IndexCollectionEntry", py.get_type::<index::CollectionEntry>())?;
@@ -45,4 +51,20 @@ fn value_error(err: ParseError) -> PyErr {
 /// `Name('text')`, quoted as Python's repr quotes it.
 fn repr(py: Python<'_>, name: &str, text: &str) -> PyResult<String> {
     Ok(format!("{name}({})", PyString::new(py, text).repr()?))
+}
+
+/// The filesystem's error as Python's `OSError(errno, strerror, path)`, which picks the subclass, such as
+/// `FileNotFoundError`, and names the file. On Windows the code is a Windows error, so it's given as `winerror`, from
+/// which Python works out `errno` and the subclass.
+fn os_error(err: io::Error, path: PathBuf) -> PyErr {
+    let text = err.to_string();
+    // io::Error's message ends in " (os error N)", which OSError's strerror doesn't have.
+    let strerror = text.split(" (os error ").next().unwrap_or(&text).to_owned();
+    match err.raw_os_error() {
+        #[cfg(windows)]
+        Some(code) => PyOSError::new_err((code, strerror, path, code)),
+        #[cfg(not(windows))]
+        Some(errno) => PyOSError::new_err((errno, strerror, path)),
+        None => PyOSError::new_err(strerror),
+    }
 }

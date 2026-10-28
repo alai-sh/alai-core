@@ -457,10 +457,10 @@ impl Plain {
     }
 
     fn remove(&mut self, path: &[String]) {
-        if let Some((key, parents)) = path.split_last() {
-            if let Some(Plain::Table(table)) = self.get_mut(parents) {
-                let _ = table.remove(key);
-            }
+        if let Some((key, parents)) = path.split_last()
+            && let Some(Plain::Table(table)) = self.get_mut(parents)
+        {
+            let _ = table.remove(key);
         }
     }
 }
@@ -519,13 +519,13 @@ fn insert_formatted(array: &mut Array, index: usize, value: &str) {
         // At the end: the comments after the last item, such as one at the end of its line, stay before the new one.
         value.decor_mut().set_prefix(array.trailing().clone());
         array.set_trailing("");
-    } else if index > 0 {
-        if let Some(next) = array.get_mut(index) {
-            // Between two: the comment at the end of the line before stays there, before the new item.
-            let prefix = next.decor().prefix().cloned().unwrap_or_default();
-            next.decor_mut().set_prefix("");
-            value.decor_mut().set_prefix(prefix);
-        }
+    } else if index > 0
+        && let Some(next) = array.get_mut(index)
+    {
+        // Between two: the comment at the end of the line before stays there, before the new item.
+        let prefix = next.decor().prefix().cloned().unwrap_or_default();
+        next.decor_mut().set_prefix("");
+        value.decor_mut().set_prefix(prefix);
     }
     array.insert_formatted(index, value);
 

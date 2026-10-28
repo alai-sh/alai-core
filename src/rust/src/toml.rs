@@ -7,9 +7,11 @@ use std::path::PathBuf;
 use alai_core::toml::toml_edit::{Datetime, Item, Offset, TableLike, Time, Value as TomlValue};
 use alai_core::toml::{self, Value};
 use pyo3::create_exception;
-use pyo3::exceptions::{PyException, PyOSError, PyValueError};
+use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyType};
+
+use crate::os_error;
 
 create_exception!(
     alai_core.toml,
@@ -33,15 +35,9 @@ fn edit_error(err: toml::EditError) -> PyErr {
 }
 
 fn read_text(py: Python<'_>, path: &PathBuf) -> PyResult<String> {
-    let bytes = py.detach(|| fs::read(path)).map_err(|err| {
-        // OSError(errno, strerror, path) picks the subclass, such as FileNotFoundError, and names the file.
-        let text = err.to_string();
-        let strerror = text.split(" (os error ").next().unwrap_or(&text).to_owned();
-        match err.raw_os_error() {
-            Some(errno) => PyOSError::new_err((errno, strerror, path.clone())),
-            None => PyOSError::new_err(strerror),
-        }
-    })?;
+    let bytes = py
+        .detach(|| fs::read(path))
+        .map_err(|err| os_error(err, path.clone()))?;
     toml::decode(bytes).map_err(toml_error)
 }
 

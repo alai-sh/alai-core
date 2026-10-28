@@ -892,3 +892,103 @@ class TomlDocument:
         Raises:
             TomlEditError: There's no such key, or the edit changes more than it should.
         """
+
+class YamlError(ValueError):
+    """The text isn't YAML Ansible could read. ``str()`` says why and where, such as ``... (at line 2, column 1)``.
+
+    Attributes:
+        name: Where the document came from, as it was given, or None.
+        line: The line it's on, from 1, or None if the parser didn't say.
+        column: The column, from 1, or None.
+    """
+
+    name: str | None
+    line: int | None
+    column: int | None
+
+class YamlWarning(UserWarning):
+    """Something in a document worth knowing about that didn't stop it being read.
+
+    Attributes:
+        kind: What it is. ``duplicate_key`` is a mapping key given more than once, of which the last value is kept,
+            where the key was first, as PyYAML keeps it.
+        name: Where the document came from, as it was given, or None.
+        line: The line it's on, from 1.
+        column: The column, from 1.
+    """
+
+    kind: str
+    name: str | None
+    line: int
+    column: int
+
+def yaml_loads(text: str, /, *, name: str | None, on_warning: _c.Callable[[YamlWarning], object] | None) -> object:
+    """Read a YAML document as Ansible reads it through PyYAML, with libyaml's parser, the GIL released while parsing.
+
+    The values are plain and given as they are, with no schema. Mappings are ``dict``, sequences are ``list``, and
+    scalars are ``str``. This doesn't follow YAML 1.1's or PyYAML's rules for other types, to keep it simple, except
+    for a plain, untagged scalar that is one of these.
+
+    - A boolean, as YAML 1.1 and PyYAML spell one, ``yes``, ``no``, ``on``, ``off``, ``true`` or ``false`` in any of
+      PyYAML's cases. ``y`` and ``n`` stay strings, as PyYAML leaves them.
+    - None, as ``~``, ``null`` or an empty value.
+    - An ``int`` or ``float`` whose ``str()`` is the original text, such as ``42`` or ``2.9``.
+
+    Booleans are kept because Ansible's docs rely on them everywhere, as in ``required: no``. None and numbers are kept
+    where converting them loses nothing. Anything else stays the text its author wrote, which is what a reader of the
+    source sees and almost always what was meant. So ``2.10``, ``0644`` and ``2021-01-01`` stay strings, where PyYAML
+    gives ``2.1``, ``420`` and a ``date``. Keys are any of these values but ``dict`` and ``list``.
+
+    Quoted and block scalars are strings, and so is any scalar with a tag, such as ``!!int 1`` or Ansible's
+    ``!unsafe``, as it was written. A tag with nothing after it, such as ``!abc:server.tld``, was meant as text, so it
+    gives the tag's text. ``<<`` merge keys are merged as PyYAML merges them, and an alias is the same object as its
+    anchor. An empty document is None.
+
+    Args:
+        text: The document. A second document in it is an error, as PyYAML's ``load`` gives.
+        name: Where the document came from, such as its file, or None. Each error and warning message starts with it,
+            as ``name: message``.
+        on_warning: Called with each ``YamlWarning`` once the document is read, or None to ignore them. If it raises,
+            so does this.
+
+    Returns:
+        The document's value.
+
+    Raises:
+        YamlError: The text isn't YAML Ansible could read, nests deeper than 256, merges keys into far more than its
+            text holds, or isn't valid Unicode, such as a string decoded with ``surrogateescape``.
+
+    Example:
+        >>> yaml_loads("required: no\\nversion_added: 2.10\\nmode: 0644\\nsince: 2.9\\n", name=None, on_warning=None)
+        {'required': False, 'version_added': '2.10', 'mode': '0644', 'since': 2.9}
+    """
+
+def yaml_select(
+    text: str,
+    keys: _c.Sequence[str],
+    /,
+    *,
+    name: str | None,
+    on_warning: _c.Callable[[YamlWarning], object] | None,
+) -> dict[str, object] | None:
+    """Read only some top-level keys of a YAML document, skipping the work of building large values that aren't wanted.
+
+    The values are as ``yaml_loads`` gives them, and the text is checked as fully as it is there.
+
+    Args:
+        text: The document.
+        keys: The top-level keys wanted. One the document doesn't have is left out.
+        name: As for ``yaml_loads``.
+        on_warning: As for ``yaml_loads``, for warnings about the keys wanted.
+
+    Returns:
+        The keys found, in the document's order, or None if its top level isn't a mapping.
+
+    Raises:
+        YamlError: As for ``yaml_loads``.
+
+    Example:
+        >>> text = "short_description: Copy files\\noptions: {src: {type: path}}\\n"
+        >>> yaml_select(text, ["short_description"], name=None, on_warning=None)
+        {'short_description': 'Copy files'}
+    """

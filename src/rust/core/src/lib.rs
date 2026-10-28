@@ -10,6 +10,7 @@ pub mod plugins;
 pub mod semver;
 mod text;
 pub mod toml;
+pub mod yaml;
 
 use std::fmt;
 

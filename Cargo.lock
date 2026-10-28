@@ -7,6 +7,7 @@ name = "alai-core"
 version = "0.0.1"
 dependencies = [
  "flate2",
+ "libyaml-safer",
  "memchr",
  "semver",
  "serde_json",
@@ -141,6 +142,12 @@ name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
+
+[[package]]
+name = "libyaml-safer"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d325b93a27b93b93b7cf4a57d681c5b6a4d8f910e695db989c055eb1e4f657df"
 
 [[package]]
 name = "memchr"

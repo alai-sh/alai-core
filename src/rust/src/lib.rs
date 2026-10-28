@@ -7,6 +7,7 @@ mod pep440;
 mod plugins;
 mod semver;
 mod toml;
+mod yaml;
 
 use std::io;
 use std::path::PathBuf;
@@ -41,6 +42,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(toml::toml_loads, m)?)?;
     m.add_function(wrap_pyfunction!(toml::toml_read, m)?)?;
     m.add_function(wrap_pyfunction!(toml::toml_dumps, m)?)?;
+    m.add("YamlError", py.get_type::<yaml::YamlError>())?;
+    m.add("YamlWarning", py.get_type::<yaml::YamlWarning>())?;
+    m.add_function(wrap_pyfunction!(yaml::yaml_loads, m)?)?;
+    m.add_function(wrap_pyfunction!(yaml::yaml_select, m)?)?;
     Ok(())
 }
 

@@ -56,6 +56,44 @@ class TestVersion:
         assert repr(low) == "Version('1.0.0')"
 
 
+class TestPrecedence:
+    # The order the SemVer spec gives in section 11, with numeric identifiers around a word.
+    SPEC = [
+        "1.0.0-1",
+        "1.0.0-1a",
+        "1.0.0-alpha",
+        "1.0.0-alpha.1",
+        "1.0.0-alpha.beta",
+        "1.0.0-beta",
+        "1.0.0-beta.2",
+        "1.0.0-beta.11",
+        "1.0.0-rc.1",
+        "1.0.0",
+        "1.0.1",
+        "1.1.0",
+        "2.0.0",
+    ]
+
+    def test_sorts_as_versions_do(self) -> None:
+        shuffled = list(reversed(self.SPEC))
+
+        assert sorted(shuffled, key=lambda t: Version(t).precedence) == self.SPEC
+        assert [v.text for v in sorted(map(Version, shuffled))] == self.SPEC
+
+    def test_build_metadata_left_out(self) -> None:
+        assert Version("1.0.0+a").precedence == Version("1.0.0+b").precedence == Version("1.0.0").precedence
+
+    def test_parts(self) -> None:
+        assert Version("1.2.3").precedence == (1, 2, 3, 1)
+        assert Version("1.2.3-rc.1").precedence == (1, 2, 3, 0, (1, "rc"), (0, 1))
+
+    def test_numbers_too_large_for_64_bits(self) -> None:
+        big = "1.0.0-99999999999999999999"
+
+        assert Version(big).precedence == (1, 0, 0, 0, (0, 99999999999999999999))
+        assert Version("1.0.0-2").precedence < Version(big).precedence
+
+
 class TestVersionReq:
     @pytest.mark.parametrize(
         ("text", "clauses"),

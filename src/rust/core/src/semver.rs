@@ -25,6 +25,33 @@ impl fmt::Display for Precedence {
     }
 }
 
+/// A pre-release identifier, as precedence compares them: numbers by value, and before any word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Identifier<'a> {
+    /// The digits, which can be longer than any integer type holds.
+    Number(&'a str),
+    Word(&'a str),
+}
+
+impl Precedence {
+    /// The major, minor and patch numbers.
+    pub fn release(&self) -> (u64, u64, u64) {
+        (self.0.major, self.0.minor, self.0.patch)
+    }
+
+    /// The pre-release identifiers, none for a release, which comes after any of its pre-releases.
+    pub fn prerelease(&self) -> impl Iterator<Item = Identifier<'_>> {
+        let pre = self.0.pre.as_str();
+        pre.split('.').filter(|_| !pre.is_empty()).map(|id| {
+            if id.bytes().all(|b| b.is_ascii_digit()) {
+                Identifier::Number(id)
+            } else {
+                Identifier::Word(id)
+            }
+        })
+    }
+}
+
 /// A collection version, kept as written. Versions are equal by text. They're ordered by precedence and then by
 /// text, so two that differ only in build metadata still have an order.
 #[derive(Clone, Debug)]
@@ -368,6 +395,17 @@ fn loose_extra(text: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn precedence_parts() {
+        let key = |text: &str| Version::parse(text).unwrap().precedence().clone();
+        assert_eq!(key("1.2.3+b").release(), (1, 2, 3));
+        assert_eq!(key("1.2.3").prerelease().count(), 0);
+        assert_eq!(
+            key("1.0.0-rc.11.1a").prerelease().collect::<Vec<_>>(),
+            [Identifier::Word("rc"), Identifier::Number("11"), Identifier::Word("1a")]
+        );
+    }
 
     fn v(text: &str) -> Version {
         Version::parse(text).unwrap()

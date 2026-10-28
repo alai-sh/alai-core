@@ -3,6 +3,7 @@
 
 mod index;
 mod pep440;
+mod plugins;
 mod semver;
 
 use alai_core::ParseError;
@@ -25,6 +26,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("IndexCollectionIndex", py.get_type::<index::CollectionIndex>())?;
     m.add("IndexCollectionVersion", py.get_type::<index::CollectionVersion>())?;
     m.add("NewerFormatError", py.get_type::<index::NewerFormatError>())?;
+    m.add("Plugins", py.get_type::<plugins::Plugins>())?;
+    m.add("PluginEntry", py.get_type::<plugins::PluginEntry>())?;
     Ok(())
 }
 

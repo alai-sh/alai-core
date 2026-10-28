@@ -6,6 +6,7 @@ version = 4
 name = "alai-core"
 version = "0.0.1"
 dependencies = [
+ "memchr",
  "semver",
  "serde_json",
 ]
@@ -16,6 +17,7 @@ version = "0.0.1"
 dependencies = [
  "alai-core",
  "pyo3",
+ "serde_json",
 ]
 
 [[package]]

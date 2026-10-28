@@ -5,6 +5,7 @@ pub mod index;
 mod json;
 mod names;
 pub mod pep440;
+pub mod plugins;
 pub mod semver;
 mod text;
 

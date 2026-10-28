@@ -250,3 +250,64 @@ class IndexCollectionIndex:
         """Each line that couldn't be read, by number from 1, and why."""
     def to_jsonl(self, *, allow_unreadable: bool = False) -> str:
         """The file as the index stores it, a line each, as ``CollectionVersion.to_json`` writes them."""
+
+class PluginEntry:
+    """One line of the plugin index, a plugin, role or playbook a collection has or had."""
+
+    def __init__(
+        self,
+        type: str,  # noqa: A002
+        name: str,
+        collection: str,
+        *,
+        since: str | None = None,
+        until: str | None = None,
+        short_description: str | None = None,
+        routing: _c.Mapping[str, object] | None = None,
+    ) -> None: ...
+    @classmethod
+    def parse(cls, line: bytes, /) -> PluginEntry | None:
+        """The line as a plugin, or None if it can't be read or needs a newer reader. A plugin index is a search aid,
+        so a bad line is skipped rather than an error."""
+    @property
+    def type(self) -> str:
+        """The type, such as ``module`` or ``filter``, which may be one this code doesn't know."""
+    @property
+    def name(self) -> str:
+        """The short name, such as ``user``."""
+    @property
+    def collection(self) -> str:
+        """The collection that has or had it, ``ansible.builtin`` for ansible-core's own."""
+    @property
+    def fqcn(self) -> str:
+        """The full name, such as ``ansible.builtin.user``."""
+    @property
+    def since(self) -> str | None:
+        """The lowest version of the collection that has it."""
+    @property
+    def until(self) -> str | None:
+        """The version it was removed in, or None if the latest still has it."""
+    @property
+    def short_description(self) -> str | None:
+        """One line from its documentation."""
+    @property
+    def routing(self) -> dict[str, object] | None:
+        """Its entry in the collection's ``plugin_routing``, as the index copied it."""
+    @property
+    def line(self) -> bytes | None:
+        """The line it was read from, unknown fields included, or None if it wasn't read."""
+    def to_json(self) -> str:
+        """The line as the index stores it. Keys within ``routing`` are sorted."""
+    def __eq__(self, other: object, /) -> bool: ...
+
+class Plugins:
+    """A plugin index's ``plugins.jsonl``, searched without parsing the lines that can't match."""
+
+    def __init__(self, data: bytes, /) -> None: ...
+    def search(self, tokens: _c.Sequence[bytes] = ()) -> list[PluginEntry]:
+        """Every readable line that contains all of ``tokens``, or every one if there are none. The first token is
+        searched for, so it should be the rarest."""
+    def named(self, names: _c.Collection[str], /) -> list[PluginEntry]:
+        """Every readable line with a ``"name": "..."`` that's one of ``names``, found in one pass."""
+    def names(self) -> set[str]:
+        """Every plugin's short name, read without parsing the lines, for suggestions."""

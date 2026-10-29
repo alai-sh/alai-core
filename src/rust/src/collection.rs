@@ -17,7 +17,7 @@ create_exception!(
     "A collection's metadata breaks ansible-galaxy's rules. `errors` lists each field's problem."
 );
 
-fn read_error(py: Python<'_>, err: ReadError, name: Option<&str>) -> PyErr {
+pub(crate) fn read_error(py: Python<'_>, err: ReadError, name: Option<&str>) -> PyErr {
     match err {
         ReadError::Yaml(err) => yaml_error(py, err, name),
         ReadError::Json(message) => PyValueError::new_err(named(name, message)),

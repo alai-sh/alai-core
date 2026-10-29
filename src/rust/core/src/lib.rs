@@ -3,6 +3,7 @@
 
 pub mod artifact;
 pub mod collection;
+pub mod extract;
 pub mod index;
 mod json;
 mod names;

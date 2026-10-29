@@ -3,6 +3,7 @@
 
 mod artifact;
 mod collection;
+mod extract;
 mod index;
 mod pep440;
 mod plugins;
@@ -37,6 +38,16 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("CollectionRemoval", py.get_type::<collection::Removal>())?;
     m.add("CollectionMetadataError", py.get_type::<collection::MetadataError>())?;
     m.add_function(wrap_pyfunction!(collection::collection_check_name, m)?)?;
+    m.add("ExtractedCollection", py.get_type::<extract::Collection>())?;
+    m.add("ExtractedPlugin", py.get_type::<extract::Plugin>())?;
+    m.add("ExtractedPluginDocs", py.get_type::<extract::PluginDocs>())?;
+    m.add("ExtractedRouting", py.get_type::<extract::Routing>())?;
+    m.add("ExtractedIssue", py.get_type::<extract::Issue>())?;
+    m.add("ExtractedDocsError", py.get_type::<extract::DocsError>())?;
+    m.add("ExtractedDocFragment", py.get_type::<extract::DocFragment>())?;
+    m.add("ExtractedFragmentLookup", py.get_type::<extract::FragmentLookup>())?;
+    m.add_function(wrap_pyfunction!(extract::extract_collection, m)?)?;
+    m.add_function(wrap_pyfunction!(extract::extract_fragment_lookup, m)?)?;
     m.add("IndexConfig", py.get_type::<index::Config>())?;
     m.add("IndexCollections", py.get_type::<index::Collections>())?;
     m.add("IndexCollectionEntry", py.get_type::<index::CollectionEntry>())?;

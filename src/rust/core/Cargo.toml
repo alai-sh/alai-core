@@ -10,6 +10,8 @@ publish = false
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 libyaml-safer = "0.3"
 memchr = "2"
+ruff_python_ast = "=0.0.20"
+ruff_python_parser = "=0.0.20"
 semver = "1.0.28"
 serde_json = "1"
 sha2 = "0.11.1"

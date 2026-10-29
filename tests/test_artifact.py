@@ -33,7 +33,7 @@ from artifact_data import (
     tar_symlink,
 )
 
-from alai_core.artifact import ExtractError
+from alai_core.artifact import ExtractError, extract_sdist
 from alai_core.artifact import extract as extract_artifact
 
 SECRET = b"outside the collection\n"
@@ -1124,3 +1124,97 @@ def test_dest_already_there(sandbox: Path) -> None:
         _ = extract_artifact(tarball, dest)
 
     assert e.value.filename == dest
+
+
+class TestSdist:
+    """A Python sdist, such as ansible-core's: only what ``include`` names, from below its one top-level directory."""
+
+    INCLUDE = ("PKG-INFO", "lib/ansible/")
+
+    def extract(self, sandbox: Path, members: list[Member], limit: int = LIMIT) -> dict[str, str]:
+        before = outside(sandbox)
+        tarball = sandbox / "artifact.tar.gz"
+        _ = build_tarball(tarball, members)
+        try:
+            extract_sdist(tarball, sandbox / "work" / "collection", include=self.INCLUDE, limit=limit)
+        finally:
+            assert outside(sandbox) == before
+        return everything(sandbox / "work" / "collection")
+
+    def refused(self, sandbox: Path, members: list[Member], message: str) -> None:
+        with pytest.raises(ExtractError, match=message) as e:
+            _ = self.extract(sandbox, members)
+        assert e.value.kind == "corrupt"
+
+    def test_only_what_is_included(self, sandbox: Path) -> None:
+        members = [
+            tar_dir("ansible_core-1.0"),
+            tar_file("ansible_core-1.0/PKG-INFO", b"Version: 1.0\n"),
+            tar_file("ansible_core-1.0/PKG-INFO.orig", b"no"),
+            tar_file("ansible_core-1.0/setup.py", b"no"),
+            tar_dir("ansible_core-1.0/lib"),
+            tar_file("ansible_core-1.0/lib/ansible.py", b"no"),
+            tar_file("ansible_core-1.0/lib/ansible/release.py", b"v"),
+            tar_file("ansible_core-1.0/lib/ansible/cli/run.py", b"x", mode=0o755),
+            tar_file("ansible_core-1.0/test/units/test.py", b"no"),
+        ]
+
+        assert self.extract(sandbox, members) == {
+            "PKG-INFO": "file 644 b'Version: 1.0\\n'",
+            "lib": "dir 755",
+            "lib/ansible": "dir 755",
+            "lib/ansible/cli": "dir 755",
+            "lib/ansible/cli/run.py": f"file {644 if WINDOWS else 755} b'x'",
+            "lib/ansible/release.py": "file 644 b'v'",
+        }
+
+    def test_links_and_devices_are_skipped(self, sandbox: Path) -> None:
+        members = [
+            tar_file("a-1/lib/ansible/real.py", b"real"),
+            tar_symlink("a-1/lib/ansible/link.py", "real.py"),
+            tar_symlink("a-1/lib/ansible/out.py", "../../../../secret.txt"),
+            tar_hardlink("a-1/lib/ansible/hard.py", "a-1/lib/ansible/real.py"),
+            tar_special("a-1/lib/ansible/fifo", tarfile.FIFOTYPE),
+            tar_dir("a-1/lib/ansible/empty"),
+        ]
+
+        assert self.extract(sandbox, members) == {
+            "lib": "dir 755",
+            "lib/ansible": "dir 755",
+            "lib/ansible/real.py": "file 644 b'real'",
+        }
+
+    def test_one_top_level_directory(self, sandbox: Path) -> None:
+        members = [tar_file("a-1/PKG-INFO", b""), tar_file("b-1/lib/ansible/x.py", b"")]
+
+        self.refused(sandbox, members, "more than one top-level directory: a-1 and b-1")
+
+    def test_nothing_beside_the_top_level_directory(self, sandbox: Path) -> None:
+        self.refused(sandbox, [tar_file("PKG-INFO", b"")], "has PKG-INFO beside its top-level directory")
+
+    @pytest.mark.parametrize("name", ["a-1/lib/ansible/../../../victim.txt", "a-1/lib/ansible//x.py"])
+    def test_path_plainly_inside(self, sandbox: Path, name: str) -> None:
+        self.refused(sandbox, [tar_file(name, SECRET)], "a path that can't be extracted safely")
+
+    def test_a_file_once(self, sandbox: Path) -> None:
+        members = [tar_file("a-1/lib/ansible/x.py", b"1"), tar_file("a-1/lib/ansible/x.py", b"2")]
+
+        self.refused(sandbox, members, "has a-1/lib/ansible/x.py more than once")
+
+    def test_limit(self, sandbox: Path) -> None:
+        # Members not extracted still count, as they're decompressed all the same.
+        members = [tar_file("a-1/test/big", b"0" * 4096), tar_file("a-1/lib/ansible/x.py", b"x")]
+
+        with pytest.raises(ExtractError, match="more than 1024 bytes") as e:
+            _ = self.extract(sandbox, members, limit=1024)
+
+        assert e.value.kind == "too_large"
+
+    def test_dest_already_there(self, sandbox: Path) -> None:
+        tarball = sandbox / "artifact.tar.gz"
+        _ = build_tarball(tarball, [tar_file("a-1/PKG-INFO", b"")])
+        dest = sandbox / "work" / "collection"
+        dest.mkdir()
+
+        with pytest.raises(FileExistsError):
+            extract_sdist(tarball, dest, include=["PKG-INFO"])

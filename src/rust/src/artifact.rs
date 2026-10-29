@@ -45,3 +45,16 @@ pub(crate) fn artifact_extract(
     py.detach(|| artifact::extract(&tarball, &dest, limit, expected.as_ref()))
         .map_err(|err| extract_error(py, err))
 }
+
+#[pyfunction]
+#[pyo3(signature = (tarball, dest, *, include, limit=0))]
+pub(crate) fn artifact_extract_sdist(
+    py: Python<'_>,
+    tarball: PathBuf,
+    dest: PathBuf,
+    include: Vec<String>,
+    limit: u64,
+) -> PyResult<()> {
+    py.detach(|| artifact::extract_sdist(&tarball, &dest, limit, &include))
+        .map_err(|err| extract_error(py, err))
+}

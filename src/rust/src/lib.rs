@@ -31,6 +31,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("Pep440SpecifierSet", py.get_type::<pep440::SpecifierSet>())?;
     m.add("ExtractError", py.get_type::<artifact::ExtractError>())?;
     m.add_function(wrap_pyfunction!(artifact::artifact_extract, m)?)?;
+    m.add_function(wrap_pyfunction!(artifact::artifact_extract_sdist, m)?)?;
     m.add("CollectionMetadata", py.get_type::<collection::Metadata>())?;
     m.add("CollectionManifest", py.get_type::<collection::Manifest>())?;
     m.add("CollectionRuntime", py.get_type::<collection::Runtime>())?;
@@ -48,6 +49,9 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("ExtractedDocFragment", py.get_type::<extract::DocFragment>())?;
     m.add("ExtractedFragmentLookup", py.get_type::<extract::FragmentLookup>())?;
     m.add_function(wrap_pyfunction!(extract::extract_collection, m)?)?;
+    m.add("EXTRACT_EDA_LEGACY_ROUTING", extract::eda_legacy_routing(py)?)?;
+    m.add_function(wrap_pyfunction!(extract::extract_ansible_core, m)?)?;
+    m.add_function(wrap_pyfunction!(extract::extract_ansible_rulebook, m)?)?;
     m.add_function(wrap_pyfunction!(extract::extract_fragment_lookup, m)?)?;
     m.add("MarkupPart", py.get_type::<markup::Part>())?;
     m.add_function(wrap_pyfunction!(markup::markup_parse, m)?)?;

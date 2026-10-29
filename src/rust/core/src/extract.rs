@@ -60,6 +60,35 @@ const EDA_DIRS: [(&str, &str, &str); 8] = [
 /// The `eda_runtime.yml` routing types ansible-rulebook reads.
 const EDA_ROUTING_TYPES: [&str; 2] = ["event_source", "event_filter"];
 
+/// The old `ansible.eda` names ansible-rulebook sends to `eda.builtin`, as (type, name, where it goes), from 1.2.1.
+/// They're in its code (`LEGACY_SOURCE_MAPPING` and `LEGACY_FILTER_MAPPING` in `collection.py`), not a file, so
+/// extraction can't find them. One is checked before any routing, and the name it gives is loaded without following
+/// routing further, so `ansible.eda.range` is `eda.builtin.range` even where `ansible.eda` still has a `range`.
+pub const EDA_LEGACY_ROUTING: [(&str, &str, &str); 8] = [
+    ("event_source", "ansible.eda.generic", "eda.builtin.generic"),
+    ("event_source", "ansible.eda.pg_listener", "eda.builtin.pg_listener"),
+    ("event_source", "ansible.eda.range", "eda.builtin.range"),
+    // ansible-rulebook's source sends this to ansible.builtin, where nothing is found. Its fix is
+    // ansible/ansible-rulebook#1002.
+    (
+        "event_filter",
+        "ansible.eda.dashes_to_underscores",
+        "eda.builtin.dashes_to_underscores",
+    ),
+    (
+        "event_filter",
+        "ansible.eda.insert_hosts_to_meta",
+        "eda.builtin.insert_hosts_to_meta",
+    ),
+    ("event_filter", "ansible.eda.json_filter", "eda.builtin.json_filter"),
+    ("event_filter", "ansible.eda.noop", "eda.builtin.noop"),
+    (
+        "event_filter",
+        "ansible.eda.normalize_keys",
+        "eda.builtin.normalize_keys",
+    ),
+];
+
 /// The largest a value kept from YAML may be. Aliases let a few hundred bytes of YAML expand to millions of values
 /// written out as JSON, so a value past either is dropped. Real docs stay far below them.
 const MAX_NODES: usize = 100_000;
@@ -71,7 +100,8 @@ const MAX_FILE: u64 = 20 * 1024 * 1024;
 /// What extraction found in a collection.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Collection {
-    /// From `MANIFEST.json`, or `galaxy.yml` in a source checkout. None if it isn't a string.
+    /// From `MANIFEST.json`, or `galaxy.yml` in a source checkout. None if it isn't a string. `ansible.builtin` for
+    /// ansible-core's own plugins and `eda.builtin` for ansible-rulebook's.
     pub namespace: Option<String>,
     pub name: Option<String>,
     pub version: Option<String>,
@@ -195,15 +225,34 @@ pub struct Issue {
     pub detail: String,
 }
 
+/// Where a tree that isn't a collection keeps what a collection would: each collection path, a directory if it ends
+/// in `/`, and the path under the tree's root it's at. The first that holds a path is where it's read from.
+type Layout = [(&'static str, &'static str)];
+
+/// ansible-core's source, as ansible.builtin.
+const ANSIBLE_CORE: &Layout = &[
+    ("plugins/modules/", "lib/ansible/modules/"),
+    ("plugins/", "lib/ansible/plugins/"),
+    ("meta/runtime.yml", "lib/ansible/config/ansible_builtin_runtime.yml"),
+];
+
+/// ansible-rulebook's source, as eda.builtin. It loads `eda.builtin.<name>` only from these two directories.
+const ANSIBLE_RULEBOOK: &Layout = &[
+    ("extensions/eda/plugins/event_source/", "ansible_rulebook/event_source/"),
+    ("extensions/eda/plugins/event_filter/", "ansible_rulebook/event_filter/"),
+];
+
 /// A collection directory's files, read only from inside it.
 struct Source {
     root: PathBuf,
     /// Every file, as a `/` path from the root, sorted. A link to a file is one, a link to a directory isn't walked.
     files: Vec<String>,
+    /// Where a tree that isn't a collection keeps each part, or empty for a collection.
+    layout: &'static Layout,
 }
 
 impl Source {
-    fn new(root: &Path) -> io::Result<Self> {
+    fn new(root: &Path, layout: &'static Layout) -> io::Result<Self> {
         let root = root.canonicalize()?;
         if !root.is_dir() {
             return Err(io::Error::new(
@@ -211,10 +260,48 @@ impl Source {
                 format!("{} isn't a directory", root.display()),
             ));
         }
+        let mut source = Source {
+            root,
+            files: Vec::new(),
+            layout,
+        };
         let mut files = Vec::new();
-        walk(&root, "", &mut files)?;
+        if layout.is_empty() {
+            walk(&source.root, "", &mut files)?;
+            files.sort();
+            source.files = files;
+            return Ok(source);
+        }
+        for (virtual_path, real) in layout {
+            let path = source.root.join(real);
+            if real.ends_with('/') {
+                if path.is_dir() {
+                    walk(&path, virtual_path, &mut files)?;
+                }
+            } else if path.is_file() {
+                files.push((*virtual_path).to_owned());
+            }
+        }
+        // A path two parts of the layout give is read from the first, so it's only a file if the first has it.
+        files.retain(|f| source.real(f).is_some_and(|r| source.root.join(r).is_file()));
         files.sort();
-        Ok(Source { root, files })
+        files.dedup();
+        source.files = files;
+        Ok(source)
+    }
+
+    /// Where the collection path `path` is under the root, or None if the layout has nowhere for it.
+    fn real(&self, path: &str) -> Option<String> {
+        if self.layout.is_empty() {
+            return Some(path.to_owned());
+        }
+        self.layout
+            .iter()
+            .find_map(|(virtual_path, real)| match path.strip_prefix(virtual_path) {
+                Some(rest) if virtual_path.ends_with('/') => Some(format!("{real}{rest}")),
+                Some("") => Some((*real).to_owned()),
+                _ => None,
+            })
     }
 
     /// Whether `path` is one of the collection's files.
@@ -222,8 +309,14 @@ impl Source {
         self.files.binary_search_by(|f| f.as_str().cmp(path)).is_ok()
     }
 
-    /// The file's content, or None if it doesn't exist, isn't a file, leads outside the collection or is too large.
+    /// The file at the collection path `path`, as `read_at` reads it.
     fn read(&self, path: &str) -> Option<Vec<u8>> {
+        self.read_at(&self.real(path)?)
+    }
+
+    /// The file at `path` under the root, or None if it doesn't exist, isn't a file, leads outside the root or is
+    /// too large.
+    fn read_at(&self, path: &str) -> Option<Vec<u8>> {
         let real = self.root.join(path).canonicalize().ok()?;
         let meta = fs::metadata(&real).ok()?;
         if !real.starts_with(&self.root) || !meta.is_file() || meta.len() > MAX_FILE {
@@ -890,6 +983,12 @@ fn metadata(source: &Source) -> Result<Names, ExtractError> {
 const MANIFEST: &str = "MANIFEST.json";
 const GALAXY: &str = "galaxy.yml";
 
+/// The file that makes a directory ansible-core's source, and gives its version.
+const CORE_RELEASE: &str = "lib/ansible/release.py";
+
+/// The file that makes a directory ansible-rulebook's source.
+const RULEBOOK_PACKAGE: &str = "ansible_rulebook/__init__.py";
+
 /// Why a collection wasn't extracted.
 #[derive(Debug)]
 pub enum ExtractError {
@@ -898,6 +997,8 @@ pub enum ExtractError {
     /// The file named, `MANIFEST.json` or `galaxy.yml`, can't be read as one. `MANIFEST.json` is read as
     /// `Manifest::parse` reads it, so one ansible-galaxy wouldn't have built is refused. Their values aren't checked.
     Metadata(&'static str, ReadError),
+    /// The directory isn't ansible-core's or ansible-rulebook's source, as it doesn't have the file named.
+    NotSource(&'static str),
 }
 
 impl From<io::Error> for ExtractError {
@@ -911,6 +1012,7 @@ impl std::fmt::Display for ExtractError {
         match self {
             ExtractError::Io(err) => err.fmt(f),
             ExtractError::Metadata(file, err) => write!(f, "{file}: {err}"),
+            ExtractError::NotSource(file) => write!(f, "it has no {file}"),
         }
     }
 }
@@ -920,10 +1022,59 @@ impl std::error::Error for ExtractError {}
 /// Extract the collection in the directory `root`. With `docs`, each plugin's docs and the collection's doc fragments
 /// are read as well.
 pub fn extract(root: &Path, docs: bool) -> Result<Collection, ExtractError> {
-    let source = Source::new(root)?;
-    let (namespace, collection, version, dependencies) = metadata(&source)?;
+    let source = Source::new(root, &[])?;
+    let names = metadata(&source)?;
+    Ok(collect(&source, names, docs))
+}
+
+/// Extract ansible.builtin from ansible-core's source in the directory `root`, a checkout or the `lib/ansible/` of
+/// its sdist, as a collection laid out as `ANSIBLE_CORE` says. Its version is `lib/ansible/release.py`'s
+/// `__version__`.
+pub fn extract_ansible_core(root: &Path, docs: bool) -> Result<Collection, ExtractError> {
+    let source = Source::new(root, ANSIBLE_CORE)?;
+    let release = source
+        .read_at(CORE_RELEASE)
+        .ok_or(ExtractError::NotSource(CORE_RELEASE))?;
+    let version = python::parse(&release).and_then(|tree| {
+        python::string_assignments(&tree.body)
+            .0
+            .into_iter()
+            .find_map(|(name, value)| (name == "__version__").then_some(value))
+    });
+    let names = (
+        Some("ansible".to_owned()),
+        Some("builtin".to_owned()),
+        version,
+        Vec::new(),
+    );
+    Ok(collect(&source, names, docs))
+}
+
+/// Extract eda.builtin, the event sources and filters ansible-rulebook ships, from its source in the directory
+/// `root`, a checkout or its sdist, as a collection laid out as `ANSIBLE_RULEBOOK` says. Its version is the sdist's
+/// `PKG-INFO` `Version`, or None without one, as a checkout has none.
+pub fn extract_ansible_rulebook(root: &Path, docs: bool) -> Result<Collection, ExtractError> {
+    let source = Source::new(root, ANSIBLE_RULEBOOK)?;
+    if !source.root.join(RULEBOOK_PACKAGE).is_file() {
+        return Err(ExtractError::NotSource(RULEBOOK_PACKAGE));
+    }
+    // PKG-INFO is email headers, which end at the first blank line.
+    let version = source.read_at("PKG-INFO").and_then(|data| {
+        String::from_utf8_lossy(&data)
+            .lines()
+            .take_while(|line| !line.trim().is_empty())
+            .find_map(|line| line.strip_prefix("Version:").map(|v| v.trim().to_owned()))
+            .filter(|v| !v.is_empty())
+    });
+    let names = (Some("eda".to_owned()), Some("builtin".to_owned()), version, Vec::new());
+    Ok(collect(&source, names, docs))
+}
+
+/// The plugins, routing and, with `docs`, docs and fragments of `source`, named as `names` says.
+fn collect(source: &Source, names: Names, docs: bool) -> Collection {
+    let (namespace, collection, version, dependencies) = names;
     let mut reader = Reader {
-        source: &source,
+        source,
         issues: Issues::default(),
         trees: HashMap::new(),
     };
@@ -1027,7 +1178,7 @@ pub fn extract(root: &Path, docs: bool) -> Result<Collection, ExtractError> {
             if found.has("role", role) {
                 continue;
             }
-            found.add("role", role.to_owned(), role_spec(&source, role), &mut reader.issues);
+            found.add("role", role.to_owned(), role_spec(source, role), &mut reader.issues);
         } else if parts[0] == "playbooks" && parts.len() == 2 && (path.ends_with(".yml") || path.ends_with(".yaml")) {
             // site.yml and site.yaml are the same playbook, and playbooks have no docs.
             let name = parts[1].rsplit_once('.').map_or(parts[1], |(stem, _)| stem);
@@ -1102,7 +1253,7 @@ pub fn extract(root: &Path, docs: bool) -> Result<Collection, ExtractError> {
 
     let mut routing = Vec::new();
     let mut fragment_routing: Vec<(String, Value)> = Vec::new();
-    let (runtime_path, runtime_data) = runtime_file(&source, &["meta/runtime.yml", "meta/runtime.yaml"]);
+    let (runtime_path, runtime_data) = runtime_file(source, &["meta/runtime.yml", "meta/runtime.yaml"]);
     let runtime = runtime_data.and_then(|data| Runtime::parse(&data).ok());
     if let Some(runtime) = &runtime {
         let doc = &runtime.plugin_routing.document;
@@ -1133,7 +1284,7 @@ pub fn extract(root: &Path, docs: bool) -> Result<Collection, ExtractError> {
             }
         }
     }
-    let (eda_path, eda_data) = runtime_file(&source, &["extensions/eda/eda_runtime.yml"]);
+    let (eda_path, eda_data) = runtime_file(source, &["extensions/eda/eda_runtime.yml"]);
     if let Some(eda) = eda_data.and_then(|data| EdaRuntime::parse(&data).ok()) {
         let doc = &eda.plugin_routing.document;
         for (kind, entries) in &eda.plugin_routing.types {
@@ -1175,7 +1326,7 @@ pub fn extract(root: &Path, docs: bool) -> Result<Collection, ExtractError> {
     fragment_routing.retain(|(name, _)| seen.insert(name.clone()));
     fragment_routing.sort_by(|a, b| a.0.cmp(&b.0));
     fragments.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(Collection {
+    Collection {
         namespace,
         name: collection,
         version,
@@ -1210,7 +1361,7 @@ pub fn extract(root: &Path, docs: bool) -> Result<Collection, ExtractError> {
             .collect(),
         fragment_routing,
         issues: issues.0,
-    })
+    }
 }
 
 /// A routing entry as a JSON-safe mapping, or None if it's empty, or too large, which is an issue.

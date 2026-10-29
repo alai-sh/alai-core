@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use alai_core::extract::{self, FragmentIndex};
 use alai_core::yaml::{Document, Value};
-use pyo3::exceptions::{PyNotADirectoryError, PyTypeError};
+use pyo3::exceptions::{PyFileNotFoundError, PyNotADirectoryError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString, PyTuple};
 
@@ -99,9 +99,14 @@ fn mapping_of(ob: Option<&Bound<'_, PyAny>>, what: &str) -> PyResult<Option<Valu
     value_of(ob).map(Some)
 }
 
-#[pyfunction]
-#[pyo3(signature = (path, /, *, docs=false))]
-pub(crate) fn extract_collection(py: Python<'_>, path: PathBuf, docs: bool) -> PyResult<Collection> {
+/// What `extract` gives for the directory `path`, with the GIL released. `what` names the source it must be.
+fn run(
+    py: Python<'_>,
+    path: PathBuf,
+    docs: bool,
+    what: &str,
+    extract: fn(&std::path::Path, bool) -> Result<extract::Collection, extract::ExtractError>,
+) -> PyResult<Collection> {
     // A missing path is the filesystem's error, FileNotFoundError, from reading it.
     if path.exists() && !path.is_dir() {
         return Err(PyNotADirectoryError::new_err(format!(
@@ -109,14 +114,52 @@ pub(crate) fn extract_collection(py: Python<'_>, path: PathBuf, docs: bool) -> P
             path.display()
         )));
     }
-    py.detach(|| extract::extract(&path, docs))
+    py.detach(|| extract(&path, docs))
         .map(Collection)
         .map_err(|err| match err {
             extract::ExtractError::Io(err) => os_error(err, path),
             extract::ExtractError::Metadata(file, err) => {
                 read_error(py, err, Some(&path.join(file).display().to_string()))
             }
+            extract::ExtractError::NotSource(_) => {
+                PyFileNotFoundError::new_err(format!("{} isn't {what}'s source: {err}", path.display()))
+            }
         })
+}
+
+#[pyfunction]
+#[pyo3(signature = (path, /, *, docs=false))]
+pub(crate) fn extract_collection(py: Python<'_>, path: PathBuf, docs: bool) -> PyResult<Collection> {
+    run(py, path, docs, "a collection", extract::extract)
+}
+
+#[pyfunction]
+#[pyo3(signature = (path, /, *, docs=false))]
+pub(crate) fn extract_ansible_core(py: Python<'_>, path: PathBuf, docs: bool) -> PyResult<Collection> {
+    run(py, path, docs, "ansible-core", extract::extract_ansible_core)
+}
+
+#[pyfunction]
+#[pyo3(signature = (path, /, *, docs=false))]
+pub(crate) fn extract_ansible_rulebook(py: Python<'_>, path: PathBuf, docs: bool) -> PyResult<Collection> {
+    run(py, path, docs, "ansible-rulebook", extract::extract_ansible_rulebook)
+}
+
+/// `EDA_LEGACY_ROUTING` by type, each old name to where it goes, as ansible-rulebook's own two dicts have it.
+pub(crate) fn eda_legacy_routing(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    let routing = PyDict::new(py);
+    for (kind, name, target) in extract::EDA_LEGACY_ROUTING {
+        let names = match routing.get_item(kind)? {
+            Some(names) => names.cast_into::<PyDict>()?,
+            None => {
+                let names = PyDict::new(py);
+                routing.set_item(kind, &names)?;
+                names
+            }
+        };
+        names.set_item(name, target)?;
+    }
+    Ok(routing)
 }
 
 #[pyfunction]

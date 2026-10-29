@@ -3,7 +3,8 @@
 
 //! Extracting a collection artifact, as `ansible-galaxy collection install` does. The tarball is read in two passes,
 //! its `MANIFEST.json` and the files manifest it names (`FILES.json` as ansible-galaxy builds it) are checked, the
-//! files manifest against the checksum `MANIFEST.json` gives it, and only what they list is written.
+//! files manifest against the checksum `MANIFEST.json` gives it, and only what they list is written. A Python sdist,
+//! such as ansible-core's, is extracted by `extract_sdist`, only the parts of it asked for.
 
 mod paths;
 
@@ -321,6 +322,84 @@ pub fn extract(
     check_listed(&listed, &members)?;
     write(tarball, dest, limit, &listed, &members, &files_name)?;
     Ok(collection)
+}
+
+/// Extract the files of the Python sdist `tarball` that `include` names, from below its top-level directory, into the
+/// new directory `dest`. With `lib/ansible/`, `ansible_core-2.21.5/lib/ansible/release.py` is written as
+/// `lib/ansible/release.py`. An entry of `include` ending in `/` is a directory and everything in it, any other a
+/// file.
+///
+/// One pass, as nothing is checked against a manifest. Every member must be under the same top-level directory, as an
+/// sdist's are, and each file written must be plainly inside it and given only once. Only regular files are written.
+/// Directories are made for them, and links, devices and anything else are skipped. Modes and `limit` are as
+/// `extract`'s. On an error, what was written so far stays in `dest`, for the caller to remove.
+pub fn extract_sdist(tarball: &Path, dest: &Path, limit: u64, include: &[String]) -> Result<(), Error> {
+    let corrupt = |detail: String| Error::Artifact("corrupt", String::new(), detail);
+    let wanted = |path: &str| {
+        include.iter().any(|inc| {
+            if inc.ends_with('/') {
+                path.starts_with(inc.as_str())
+            } else {
+                path == inc
+            }
+        })
+    };
+    make_new_dir(dest)?;
+    let mut out = Target::new(dest)?;
+    let mut top: Option<String> = None;
+    let mut written: HashSet<String> = HashSet::new();
+    let mut buffer = vec![0u8; BUFFER];
+    let (mut archive, fail) = open_archive(tarball, &Budget::new(limit))?;
+    for entry in archive.entries().map_err(|e| fail.of(e))? {
+        let mut entry = entry.map_err(|e| fail.of(e))?;
+        if entry.header().entry_type() == EntryType::XGlobalHeader {
+            check_global(&mut entry, &fail)?;
+            continue;
+        }
+        let kind = check_member(&entry)?;
+        let Some(name) = member_name(&entry) else {
+            continue;
+        };
+        let (first, rest) = name.split_once('/').unwrap_or((&name, ""));
+        match &top {
+            Some(top) if top != first => {
+                return Err(corrupt(format!(
+                    "the sdist has more than one top-level directory: {top} and {first}"
+                )));
+            }
+            Some(_) => {}
+            None => top = Some(first.to_owned()),
+        }
+        if rest.is_empty() && kind != Kind::Dir {
+            return Err(corrupt(format!("the sdist has {name} beside its top-level directory")));
+        }
+        if kind != Kind::File || !wanted(rest) {
+            continue;
+        }
+        if check_path(&name).is_err() {
+            return Err(corrupt(format!(
+                "the sdist has a path that can't be extracted safely: {name}"
+            )));
+        }
+        if !written.insert(rest.to_owned()) {
+            return Err(corrupt(format!("the sdist has {name} more than once")));
+        }
+        let mode = if entry.header().mode().unwrap_or(0) & 0o100 != 0 {
+            0o755
+        } else {
+            0o644
+        };
+        let path = out.path(rest)?;
+        let mut file = create(&path, mode)?;
+        loop {
+            let read = entry.read(&mut buffer).map_err(|e| fail.of(e))?;
+            if read == 0 {
+                break;
+            }
+            file.write_all(&buffer[..read]).at(&path)?;
+        }
+    }
+    Ok(())
 }
 
 /// What a member is, as the files manifest and tarfile see it.

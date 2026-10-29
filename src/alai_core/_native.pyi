@@ -3,6 +3,7 @@
 
 import collections.abc as _c
 import os
+import typing as _t
 
 class SemverVersion:
     """A collection version, SemVer 2.0.0 kept as written.
@@ -678,6 +679,34 @@ def artifact_extract(
 
     Raises:
         ExtractError: The tarball can't be read, or can't be extracted safely.
+        OSError: The filesystem's own error. ``filename`` is where it happened.
+    """
+
+def artifact_extract_sdist(
+    tarball: str | os.PathLike[str],
+    dest: str | os.PathLike[str],
+    *,
+    include: _c.Sequence[str],
+    limit: int = 0,
+) -> None:
+    """Extract the files of a Python sdist that ``include`` names, from below its top-level directory, in one pass
+    with the GIL released.
+
+    With ``include=["lib/ansible/"]``, ``ansible_core-2.21.5/lib/ansible/release.py`` is written as
+    ``dest/lib/ansible/release.py``, for ``extract_ansible_core``. Every member must be under the same top-level
+    directory, and each file written must be plainly inside it and given only once. Only regular files are written.
+    Directories are made for them, and links, devices and anything else are skipped. Modes and ``limit`` are as
+    ``artifact_extract``'s. On an error, what was written so far stays in ``dest``, for the caller to remove.
+
+    Args:
+        tarball: The sdist, a gzipped tarball.
+        dest: The directory to extract it into, which mustn't exist yet.
+        include: What to extract, below the top-level directory. One ending in ``/`` is a directory and everything
+            in it, any other a file.
+        limit: The most it may unpack to, in bytes, counting every member, written or not. 0 is no limit.
+
+    Raises:
+        ExtractError: The tarball can't be read, or can't be extracted safely, as ``corrupt`` or ``too_large``.
         OSError: The filesystem's own error. ``filename`` is where it happened.
     """
 
@@ -1468,7 +1497,8 @@ class ExtractedCollection:
 
     @property
     def namespace(self) -> str | None:
-        """From ``MANIFEST.json``, or ``galaxy.yml`` in a source checkout. None if it isn't a string."""
+        """From ``MANIFEST.json``, or ``galaxy.yml`` in a source checkout. None if it isn't a string. ``ansible``
+        for ansible-core's own plugins and ``eda`` for ansible-rulebook's."""
     @property
     def name(self) -> str | None:
         """As for ``namespace``."""
@@ -1522,6 +1552,67 @@ def extract_collection(path: str | os.PathLike[str], /, *, docs: bool = False) -
         YamlError: ``galaxy.yml`` isn't YAML Ansible could read.
 
         Each message starts with the file's path.
+    """
+
+class _EdaLegacyRouting(_t.TypedDict):
+    """``EXTRACT_EDA_LEGACY_ROUTING``'s types, each old full name to the one it goes to. Only for type checking, as
+    the value is a plain dict."""
+
+    event_source: dict[str, str]
+    event_filter: dict[str, str]
+
+EXTRACT_EDA_LEGACY_ROUTING: _EdaLegacyRouting
+"""The old ``ansible.eda`` names ansible-rulebook sends to ``eda.builtin``, by type, from ansible-rulebook 1.2.1.
+
+They're in ansible-rulebook's code, not a file, so ``extract_ansible_rulebook`` can't find them. One is checked
+before any routing, and the name it gives is loaded without following routing further. So ``ansible.eda.range`` is
+``eda.builtin.range`` even where ``ansible.eda`` still has a ``range``.
+"""
+
+def extract_ansible_core(path: str | os.PathLike[str], /, *, docs: bool = False) -> ExtractedCollection:
+    """Extract ansible-core's own plugins, as ``ansible.builtin``, from its source in the directory ``path``, with
+    the GIL released.
+
+    They're read as ``extract_collection`` reads a collection's, from ``lib/ansible/modules/`` as
+    ``plugins/modules/``, ``lib/ansible/plugins/`` as ``plugins/``, and ``lib/ansible/config/ansible_builtin_runtime.yml``
+    as ``meta/runtime.yml``. Its version is ``lib/ansible/release.py``'s ``__version__``. With ``docs``, its doc
+    fragments are those a short name such as ``files`` means, for ``extract_fragment_lookup``.
+
+    Args:
+        path: A checkout, or an sdist extracted with ``artifact_extract_sdist`` and ``include=["lib/ansible/"]``.
+        docs: Read each plugin's docs and the doc fragments too.
+
+    Returns:
+        ``ansible.builtin``, at the version ``path`` is, with no dependencies and no ``requires_ansible``.
+
+    Raises:
+        NotADirectoryError: ``path`` isn't a directory.
+        FileNotFoundError: ``path`` has no ``lib/ansible/release.py``, so isn't ansible-core's source.
+        OSError: The directory can't be read.
+    """
+
+def extract_ansible_rulebook(path: str | os.PathLike[str], /, *, docs: bool = False) -> ExtractedCollection:
+    """Extract the event sources and filters ansible-rulebook ships, as ``eda.builtin``, from its source in the
+    directory ``path``, with the GIL released.
+
+    They're read as ``extract_collection`` reads a collection's, from ``ansible_rulebook/event_source/`` and
+    ``ansible_rulebook/event_filter/``, the directories ansible-rulebook loads ``eda.builtin.<name>`` from. It has no
+    routing. The legacy ``ansible.eda.*`` names it maps to these are in its code, not a file. Its version is
+    ``PKG-INFO``'s ``Version``.
+
+    Args:
+        path: A checkout, or an sdist extracted with ``artifact_extract_sdist`` and
+            ``include=["PKG-INFO", "ansible_rulebook/"]``.
+        docs: Read each plugin's docs too.
+
+    Returns:
+        ``eda.builtin``, with no dependencies and no ``requires_ansible``. Its version is None without
+        ``PKG-INFO``, as in a checkout.
+
+    Raises:
+        NotADirectoryError: ``path`` isn't a directory.
+        FileNotFoundError: ``path`` has no ``ansible_rulebook/__init__.py``, so isn't ansible-rulebook's source.
+        OSError: The directory can't be read.
     """
 
 def extract_fragment_lookup(collections: _c.Iterable[ExtractedCollection], /) -> ExtractedFragmentLookup:

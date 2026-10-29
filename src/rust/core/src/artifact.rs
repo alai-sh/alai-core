@@ -2,7 +2,8 @@
 // MIT License (see LICENSE or https://opensource.org/licenses/MIT)
 
 //! Extracting a collection artifact, as `ansible-galaxy collection install` does. The tarball is read in two passes,
-//! its `MANIFEST.json` and `FILES.json` are checked, and only what they list is written.
+//! its `MANIFEST.json` and the files manifest it names (`FILES.json` as ansible-galaxy builds it) are checked, the
+//! files manifest against the checksum `MANIFEST.json` gives it, and only what they list is written.
 
 mod paths;
 
@@ -14,6 +15,8 @@ use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::collection::ReadError;
+use crate::yaml::Value as YamlValue;
 use flate2::bufread::MultiGzDecoder;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -26,8 +29,8 @@ use paths::{Target, check_link, check_path, create, make_dir, make_new_dir};
 pub enum ExtractError {
     /// The tarball can't be read, or an entry can't be extracted safely, as its kind, the entry and a detail. The kinds
     /// are `corrupt`, `missing`, `not_file`, `not_dir`, `path`, `link`, `escape`, `unreadable`, `checksum`,
-    /// `too_large`, `json`, `not_object`, `manifest`, `manifest_fields`, `files_list`, `files_entry`,
-    /// `files_checksum`, `files_special` and `files_twice`.
+    /// `too_large`, `json`, `not_object`, `manifest`, `manifest_invalid`, `manifest_fields`, `files_mismatch`,
+    /// `files_list`, `files_entry`, `files_checksum`, `files_special` and `files_twice`.
     Artifact(&'static str, String, String),
     /// The filesystem's own error, at a path.
     Os(io::Error, PathBuf),
@@ -35,9 +38,17 @@ pub enum ExtractError {
 
 type Error = ExtractError;
 
+/// The detail of `missing` and `not_file` for `MANIFEST.json` and the collection's files manifest, which every
+/// artifact has, rather than for an entry the files manifest lists.
+const REQUIRED: &str = "required";
+
 impl ExtractError {
     fn extract(kind: &'static str, entry: &str) -> Self {
         ExtractError::Artifact(kind, entry.to_owned(), String::new())
+    }
+
+    fn required(kind: &'static str, entry: &str) -> Self {
+        ExtractError::Artifact(kind, entry.to_owned(), REQUIRED.to_owned())
     }
 }
 
@@ -49,9 +60,22 @@ impl fmt::Display for ExtractError {
         };
         match kind {
             "corrupt" => write!(f, "can't extract the artifact: {detail}"),
-            "missing" => write!(f, "the artifact doesn't contain {entry}, which FILES.json lists"),
-            "not_file" => write!(f, "{entry} in the artifact isn't a file, as FILES.json says"),
-            "not_dir" => write!(f, "{entry} in the artifact isn't a directory, as FILES.json says"),
+            "missing" if detail == REQUIRED => {
+                write!(f, "the artifact doesn't contain {entry}, which a collection needs")
+            }
+            "missing" => write!(
+                f,
+                "the artifact doesn't contain {entry}, which the collection's files manifest lists"
+            ),
+            "not_file" if detail == REQUIRED => write!(f, "{entry} in the artifact isn't a file"),
+            "not_file" => write!(
+                f,
+                "{entry} in the artifact isn't a file, as the collection's files manifest says"
+            ),
+            "not_dir" => write!(
+                f,
+                "{entry} in the artifact isn't a directory, as the collection's files manifest says"
+            ),
             "path" => write!(f, "the artifact has a path outside the collection: {entry}"),
             "link" => write!(f, "{entry} in the artifact links outside the collection, to {detail}"),
             "escape" => write!(
@@ -59,17 +83,34 @@ impl fmt::Display for ExtractError {
                 "{entry} in the artifact leads outside the collection, through a symlink"
             ),
             "unreadable" => write!(f, "{entry} in the artifact can't be read"),
-            "checksum" => write!(f, "{entry} in the artifact doesn't match its checksum in FILES.json"),
+            "checksum" => write!(
+                f,
+                "{entry} in the artifact doesn't match its checksum in the collection's files manifest"
+            ),
             "too_large" => write!(f, "can't extract the artifact: it unpacks to more than {detail} bytes"),
             "json" => write!(f, "{entry} in the artifact isn't valid JSON: {detail}"),
             "not_object" => write!(f, "{entry} in the artifact isn't a JSON object"),
             "manifest" => write!(f, "the artifact's MANIFEST.json is for {detail}"),
+            "manifest_invalid" => write!(
+                f,
+                "the artifact's MANIFEST.json isn't one ansible-galaxy builds: {detail}"
+            ),
             "manifest_fields" => write!(f, "MANIFEST.json's collection_info has no namespace, name and version"),
-            "files_list" => write!(f, "the artifact's FILES.json has no 'files' list"),
-            "files_entry" => write!(f, "the artifact's FILES.json has an unreadable entry: {detail}"),
-            "files_checksum" => write!(f, "the artifact's FILES.json has no checksum for {entry}"),
-            "files_special" => write!(f, "the artifact's FILES.json lists {entry}, which a build never does"),
-            "files_twice" => write!(f, "the artifact's FILES.json lists {entry} more than once, differently"),
+            "files_mismatch" => write!(
+                f,
+                "the artifact's {entry} doesn't match the checksum its MANIFEST.json gives"
+            ),
+            "files_list" => write!(f, "the artifact's {entry} has no 'files' list"),
+            "files_entry" => write!(f, "the collection's files manifest has an unreadable entry: {detail}"),
+            "files_checksum" => write!(f, "the collection's files manifest has no checksum for {entry}"),
+            "files_special" => write!(
+                f,
+                "the collection's files manifest lists {entry}, which a build never does"
+            ),
+            "files_twice" => write!(
+                f,
+                "the collection's files manifest lists {entry} more than once, differently"
+            ),
             _ => write!(f, "{kind}: {entry} {detail}"),
         }
     }
@@ -182,7 +223,7 @@ fn open_archive(tarball: &Path, budget: &Rc<Budget>) -> Result<(Tarball, Failure
 }
 
 /// A member's name as Python's tarfile gives it, without a directory's trailing `/`; None if it isn't UTF-8, so
-/// can't be one `FILES.json` names.
+/// can't be one the files manifest names.
 fn member_name<R: Read>(entry: &tar::Entry<R>) -> Option<String> {
     let raw = entry.path_bytes();
     let name = std::str::from_utf8(&raw).ok()?;
@@ -246,16 +287,17 @@ const FILES: &str = "FILES.json";
 ///
 /// Two passes, as a gzip stream can't be seeked and the last member of a name is the one that counts (`tar -r` appends
 /// a replacement): the first reads only the headers, for where each name's last member is, and the content of the
-/// last `MANIFEST.json` and `FILES.json`; then both are checked, and every entry `FILES.json` lists, before anything
-/// is written; the second writes only those last members, from what the first recorded of each. Every path and
+/// last `MANIFEST.json` and `FILES.json`. The files manifest is the one `MANIFEST.json` names, so only another name
+/// costs a pass of its own, for that member. Then both are checked, and every entry the files manifest lists, before
+/// anything is written; the second writes only those last members, from what the first recorded of each. Every path and
 /// symlink must stay inside `dest`, by name and on disk. Files are `0644`, or `0755` if the tarball marks them
 /// executable, and directories `0755`, both masked by the process umask as the kernel applies it. More than `limit`
 /// bytes unpacked, in either pass, is `too_large`, counting what a hard link copies and a symlink's checksum reads;
 /// 0 is no limit.
 ///
 /// On Windows, modes aren't set, and a name Windows can't hold safely is `path`. A symlink is made as a link to a
-/// directory or a file as `FILES.json` lists it. If Windows won't make links, what it points to is copied once every
-/// member is written.
+/// directory or a file as the files manifest lists it. If Windows won't make links, what it points to is copied once
+/// every member is written.
 pub fn extract(
     tarball: &Path,
     dest: &Path,
@@ -263,14 +305,25 @@ pub fn extract(
     expected: Option<&(String, String, String)>,
 ) -> Result<(String, String, String), Error> {
     let (members, mut specials) = scan(tarball, limit)?;
-    let collection = check_manifest(&special(&mut specials, MANIFEST)?, expected)?;
-    let listed = parse_files(&special(&mut specials, FILES)?)?;
+    let (collection, files_name, files_sha256) = check_manifest(&special(&mut specials, MANIFEST)?, expected)?;
+    // The file MANIFEST.json names, FILES.json as ansible-galaxy builds it, checked before any entry is read.
+    check_path(&files_name)?;
+    let files = if files_name == FILES {
+        special(&mut specials, FILES)?
+    } else {
+        read_member(tarball, limit, &members, &files_name)?
+    };
+    let actual: String = Sha256::digest(&files).iter().map(|b| format!("{b:02x}")).collect();
+    if actual != files_sha256 {
+        return Err(Error::extract("files_mismatch", &files_name));
+    }
+    let listed = parse_files(&files, &files_name)?;
     check_listed(&listed, &members)?;
-    write(tarball, dest, limit, &listed, &members)?;
+    write(tarball, dest, limit, &listed, &members, &files_name)?;
     Ok(collection)
 }
 
-/// What a member is, as `FILES.json` and tarfile see it.
+/// What a member is, as the files manifest and tarfile see it.
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Dir,
@@ -308,7 +361,7 @@ impl Member {
     }
 }
 
-/// One entry `FILES.json` lists.
+/// One entry the files manifest lists.
 struct Listed {
     name: String,
     dir: bool,
@@ -327,7 +380,7 @@ fn scan(
     let (mut archive, fail) = open_archive(tarball, &Budget::new(limit))?;
     for (index, entry) in archive.entries().map_err(|e| fail.of(e))?.enumerate() {
         let mut entry = entry.map_err(|e| fail.of(e))?;
-        // Not a member, as tarfile reads it, so nothing FILES.json can list.
+        // Not a member, as tarfile reads it, so nothing the files manifest can list.
         if entry.header().entry_type() == EntryType::XGlobalHeader {
             check_global(&mut entry, &fail)?;
             continue;
@@ -370,10 +423,29 @@ fn scan(
 /// The content of the last `MANIFEST.json` or `FILES.json`: `missing` if there's none, `not_file` if it isn't a file.
 fn special(specials: &mut HashMap<&'static str, Option<Vec<u8>>>, name: &str) -> Result<Vec<u8>, Error> {
     match specials.remove(name) {
-        None => Err(Error::extract("missing", name)),
-        Some(None) => Err(Error::extract("not_file", name)),
+        None => Err(Error::required("missing", name)),
+        Some(None) => Err(Error::required("not_file", name)),
         Some(Some(data)) => Ok(data),
     }
+}
+
+/// The last member named `name`, a file listing the collection's files that isn't `FILES.json`, so the first pass
+/// didn't keep it: a pass of its own, as the name is only known once `MANIFEST.json` is read, which may come after it.
+fn read_member(tarball: &Path, limit: u64, members: &HashMap<String, Member>, name: &str) -> Result<Vec<u8>, Error> {
+    let member = members.get(name).ok_or_else(|| Error::required("missing", name))?;
+    if member.kind != Kind::File {
+        return Err(Error::required("not_file", name));
+    }
+    let (mut archive, fail) = open_archive(tarball, &Budget::new(limit))?;
+    for (index, entry) in archive.entries().map_err(|e| fail.of(e))?.enumerate() {
+        let mut entry = entry.map_err(|e| fail.of(e))?;
+        if index == member.index {
+            let mut data = Vec::with_capacity(entry.size().min(BUFFER as u64) as usize);
+            entry.read_to_end(&mut data).map_err(|e| fail.of(e))?;
+            return Ok(data);
+        }
+    }
+    Err(Error::required("missing", name))
 }
 
 fn parse_object(data: &[u8], name: &str) -> Result<serde_json::Map<String, Value>, Error> {
@@ -384,52 +456,60 @@ fn parse_object(data: &[u8], name: &str) -> Result<serde_json::Map<String, Value
     }
 }
 
-/// The namespace, name and version `MANIFEST.json`'s `collection_info` gives: with `expected`, `manifest` unless
-/// they're those, compared as text, as alai's `Version` compares, the message giving what it found as JSON (`null`
-/// for a missing field); without, `manifest_fields` unless all three are strings, for the caller to check.
-fn check_manifest(data: &[u8], expected: Option<&(String, String, String)>) -> Result<(String, String, String), Error> {
-    let obj = parse_object(data, MANIFEST)?;
-    let info = obj.get("collection_info").and_then(Value::as_object);
-    let field = |key: &str| info.and_then(|i| i.get(key));
-    let found = (field("namespace"), field("name"), field("version"));
-    let text = (
-        found.0.and_then(Value::as_str),
-        found.1.and_then(Value::as_str),
-        found.2.and_then(Value::as_str),
-    );
-    match expected {
+/// The namespace, name and version `MANIFEST.json`'s `collection_info` gives, and the name and checksum of the file
+/// listing the collection's files. The file is
+/// read as `Manifest::parse` reads it, `manifest_invalid` if it breaks ansible-galaxy's format. With `expected`,
+/// `manifest` unless the three are those, compared as text, as alai's `Version` compares, the message giving what it
+/// found (`null` for a missing field); without, `manifest_fields` unless all three are strings, for the caller to
+/// check.
+#[allow(clippy::type_complexity)]
+fn check_manifest(
+    data: &[u8],
+    expected: Option<&(String, String, String)>,
+) -> Result<((String, String, String), String, String), Error> {
+    let manifest = match crate::collection::Manifest::parse(data) {
+        Ok(manifest) => manifest,
+        Err(ReadError::Json(message)) => return Err(Error::Artifact("manifest_invalid", String::new(), message)),
+        Err(ReadError::Invalid(e)) => {
+            let lines: Vec<String> = e.to_string().lines().map(str::to_owned).collect();
+            return Err(Error::Artifact("manifest_invalid", String::new(), lines.join("; ")));
+        }
+        Err(ReadError::Yaml(e)) => return Err(Error::Artifact("manifest_invalid", String::new(), e.to_string())),
+    };
+    let info = &manifest.collection_info;
+    let text = |key: &str| match info.get(key) {
+        Some(YamlValue::String(s)) => Some(s.as_str()),
+        _ => None,
+    };
+    let found = (text("namespace"), text("name"), text("version"));
+    let collection = match expected {
         Some((namespace, name, version)) => {
-            if text != (Some(namespace.as_str()), Some(name.as_str()), Some(version.as_str())) {
-                let shown = format!("{}.{} {}", text_of(found.0), text_of(found.1), text_of(found.2));
+            if found != (Some(namespace.as_str()), Some(name.as_str()), Some(version.as_str())) {
+                let shown = |key: &str| {
+                    info.get(key)
+                        .map_or_else(|| "null".to_owned(), crate::collection::shown)
+                };
+                let shown = format!("{}.{} {}", shown("namespace"), shown("name"), shown("version"));
                 return Err(Error::Artifact("manifest", String::new(), shown));
             }
-            Ok((namespace.clone(), name.clone(), version.clone()))
+            (namespace.clone(), name.clone(), version.clone())
         }
-        None => match text {
-            (Some(namespace), Some(name), Some(version)) => {
-                Ok((namespace.to_owned(), name.to_owned(), version.to_owned()))
-            }
-            _ => Err(Error::extract("manifest_fields", MANIFEST)),
+        None => match found {
+            (Some(namespace), Some(name), Some(version)) => (namespace.to_owned(), name.to_owned(), version.to_owned()),
+            _ => return Err(Error::extract("manifest_fields", MANIFEST)),
         },
-    }
+    };
+    Ok((collection, manifest.files_name, manifest.files_sha256))
 }
 
-/// A field as a message shows it: a string as it is, anything else as JSON, `null` when missing.
-fn text_of(value: Option<&Value>) -> String {
-    match value {
-        Some(Value::String(s)) => s.clone(),
-        Some(other) => other.to_string(),
-        None => "null".to_owned(),
-    }
-}
-
-/// `FILES.json`'s entries, each a name, `file` or `dir`, and for a file a SHA-256: every name plainly inside the
-/// collection, neither `MANIFEST.json` nor `FILES.json` (a build never lists them, and neither could be listed with a
-/// checksum that matches), and one listed twice only if both agree. `.`, the collection itself, is left out.
-fn parse_files(data: &[u8]) -> Result<Vec<Listed>, Error> {
-    let obj = parse_object(data, FILES)?;
+/// The files manifest's entries, each a name, `file` or `dir`, and for a file a SHA-256: every name plainly inside the
+/// collection, neither `MANIFEST.json` nor the files manifest, `files_name` (a build never lists them, and neither
+/// could be listed with a checksum that matches), and one listed twice only if both agree. `.`, the collection itself,
+/// is left out.
+fn parse_files(data: &[u8], files_name: &str) -> Result<Vec<Listed>, Error> {
+    let obj = parse_object(data, files_name)?;
     let Some(entries) = obj.get("files").and_then(Value::as_array) else {
-        return Err(Error::extract("files_list", FILES));
+        return Err(Error::extract("files_list", files_name));
     };
     let mut listed: Vec<Listed> = Vec::with_capacity(entries.len());
     for entry in entries {
@@ -444,7 +524,7 @@ fn parse_files(data: &[u8]) -> Result<Vec<Listed>, Error> {
         if ftype == "file" && sha256.is_none() {
             return Err(Error::extract("files_checksum", name));
         }
-        if name == MANIFEST || name == FILES {
+        if name == MANIFEST || name == files_name {
             return Err(Error::extract("files_special", name));
         }
         listed.push(Listed {
@@ -477,8 +557,8 @@ fn parse_files(data: &[u8]) -> Result<Vec<Listed>, Error> {
     Ok(kept)
 }
 
-/// Before anything is written, in `FILES.json`'s order: each entry's last member is there, of the type listed, and a
-/// symlink's target stays inside the collection by name.
+/// Before anything is written, in the files manifest's order: each entry's last member is there, of the type listed,
+/// and a symlink's target stays inside the collection by name.
 fn check_listed(listed: &[Listed], members: &HashMap<String, Member>) -> Result<(), Error> {
     for item in listed {
         let name = item.name.as_str();
@@ -495,8 +575,8 @@ fn check_listed(listed: &[Listed], members: &HashMap<String, Member>) -> Result<
     Ok(())
 }
 
-/// A member the second pass writes: its name, whether `FILES.json` lists it as a directory, its checksum, and what
-/// the first pass recorded of it.
+/// A member the second pass writes: its name, whether the files manifest lists it as a directory, its checksum, and
+/// what the first pass recorded of it.
 #[derive(Clone, Copy)]
 struct Todo<'a> {
     name: &'a str,
@@ -522,8 +602,8 @@ enum Deferred<'a> {
     },
 }
 
-/// The second pass: write the last member of each listed name, and of `MANIFEST.json` and `FILES.json`, into the new
-/// directory `dest`, each file checked against its SHA-256 as it's written. What each member is, and where a link
+/// The second pass: write the last member of each listed name, and of `MANIFEST.json` and the files manifest, into the
+/// new directory `dest`, each file checked against its SHA-256 as it's written. What each member is, and where a link
 /// leads, is as the first pass recorded and checked it; only a file's content is taken from this pass.
 fn write(
     tarball: &Path,
@@ -531,6 +611,7 @@ fn write(
     limit: u64,
     listed: &[Listed],
     members: &HashMap<String, Member>,
+    files_name: &str,
 ) -> Result<(), Error> {
     let mut todo: HashMap<usize, Todo> = HashMap::with_capacity(listed.len() + 2);
     for item in listed {
@@ -547,7 +628,7 @@ fn write(
             },
         );
     }
-    for name in [MANIFEST, FILES] {
+    for name in [MANIFEST, files_name] {
         let member = &members[name];
         let (dir, sha256) = (false, None);
         todo.insert(
@@ -637,7 +718,7 @@ fn write(
     }
     for item in deferred {
         match item {
-            // A symlink's checksum in FILES.json is of the file it points to, as ansible-galaxy checks it.
+            // A symlink's checksum in the files manifest is of the file it points to, as ansible-galaxy checks it.
             Deferred::Symlink { entry, path, sha256 } => {
                 let Some(mut file) = open_regular(&path) else {
                     return Err(Error::extract("unreadable", entry));

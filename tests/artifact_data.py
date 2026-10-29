@@ -74,9 +74,21 @@ def build_tarball(path: Path, members: list[Member]) -> tuple[str, int]:
     return _sha256(data), len(data)
 
 
-def manifest_json(name: str = "ns.coll", version: str = "1.0.0") -> bytes:
+def manifest_json(
+    name: str = "ns.coll", version: str = "1.0.0", *, files: bytes | None = None, files_name: str = "FILES.json"
+) -> bytes:
+    """``MANIFEST.json`` as ansible-galaxy builds it, naming ``files``, an empty ``FILES.json`` if None, by its
+    sha256."""
     namespace, short = name.split(".")
-    return json.dumps({"collection_info": {"namespace": namespace, "name": short, "version": version}}).encode()
+    files_manifest = {
+        "name": files_name,
+        "ftype": "file",
+        "chksum_type": "sha256",
+        "chksum_sha256": _sha256(files_json() if files is None else files),
+        "format": 1,
+    }
+    info = {"namespace": namespace, "name": short, "version": version}
+    return json.dumps({"collection_info": info, "file_manifest_file": files_manifest, "format": 1}).encode()
 
 
 def files_json(*entries: dict[str, object]) -> bytes:

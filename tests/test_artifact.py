@@ -9,6 +9,7 @@ from __future__ import annotations
 import collections.abc as _c
 import gzip
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -103,12 +104,13 @@ def refused(sandbox: Path, members: list[Member], message: str) -> None:
 
 def collection(*members: Member, files: list[dict[str, object]]) -> list[Member]:
     """``members`` after MANIFEST.json and a FILES.json listing ``files``, as a build stores them."""
-    return [tar_file("MANIFEST.json", manifest_json()), tar_file("FILES.json", files_json(*files)), *members]
+    data = files_json(*files)
+    return [tar_file("MANIFEST.json", manifest_json(files=data)), tar_file("FILES.json", data), *members]
 
 
 def special_files(files: bytes) -> dict[str, str]:
     """The tree entries for MANIFEST.json and a FILES.json of ``files``."""
-    return {"FILES.json": f"file 644 {files!r}", "MANIFEST.json": f"file 644 {manifest_json()!r}"}
+    return {"FILES.json": f"file 644 {files!r}", "MANIFEST.json": f"file 644 {manifest_json(files=files)!r}"}
 
 
 def sha256(data: bytes) -> str:
@@ -122,7 +124,7 @@ class TestAppended:
     def test_dropped_from_the_new_listing(self, sandbox: Path) -> None:
         new = files_json(listed("a", b"a"))
         members = [
-            tar_file("MANIFEST.json", manifest_json()),
+            tar_file("MANIFEST.json", manifest_json(files=new)),
             tar_file("FILES.json", files_json(listed("a", b"a"), listed("b", b"b"))),
             tar_file("a", b"a"),
             tar_file("b", b"b"),
@@ -135,7 +137,7 @@ class TestAppended:
         # b is stored before the listing that names it.
         new = files_json(listed("a", b"a"), listed("b", b"b"))
         members = [
-            tar_file("MANIFEST.json", manifest_json()),
+            tar_file("MANIFEST.json", manifest_json(files=new)),
             tar_file("FILES.json", files_json(listed("a", b"a"))),
             tar_file("a", b"a"),
             tar_file("b", b"b"),
@@ -147,7 +149,7 @@ class TestAppended:
     def test_new_content_and_new_listing(self, sandbox: Path) -> None:
         new = files_json(listed("a", b"two"))
         members = [
-            tar_file("MANIFEST.json", manifest_json()),
+            tar_file("MANIFEST.json", manifest_json(files=new)),
             tar_file("FILES.json", files_json(listed("a", b"one"))),
             tar_file("a", b"one"),
             tar_file("a", b"two"),
@@ -167,12 +169,13 @@ class TestAppended:
         refused(sandbox, members, "a in the artifact doesn't match its checksum")
 
     def test_new_listing_of_the_first_copy(self, sandbox: Path) -> None:
+        new = files_json(listed("a", b"one"))
         members = [
-            tar_file("MANIFEST.json", manifest_json()),
-            tar_file("FILES.json", files_json(listed("a", b"one"))),
+            tar_file("MANIFEST.json", manifest_json(files=new)),
+            tar_file("FILES.json", new),
             tar_file("a", b"one"),
             tar_file("a", b"two"),
-            tar_file("FILES.json", files_json(listed("a", b"one"))),
+            tar_file("FILES.json", new),
         ]
 
         refused(sandbox, members, "a in the artifact doesn't match its checksum")
@@ -232,7 +235,7 @@ class TestAppended:
     def test_escaping_listing_replaced(self, sandbox: Path) -> None:
         new = files_json(listed("a", b"a"))
         members = [
-            tar_file("MANIFEST.json", manifest_json()),
+            tar_file("MANIFEST.json", manifest_json(files=new)),
             tar_file("FILES.json", files_json(listed("../escape", b"a"))),
             tar_file("a", b"a"),
             tar_file("FILES.json", new),
@@ -241,14 +244,130 @@ class TestAppended:
         assert extract(sandbox, members) == {**special_files(new), "a": "file 644 b'a'"}
 
     def test_listing_replaced_by_an_escaping_one(self, sandbox: Path) -> None:
+        new = files_json(listed("../victim.txt", SECRET))
         members = [
-            tar_file("MANIFEST.json", manifest_json()),
+            tar_file("MANIFEST.json", manifest_json(files=new)),
             tar_file("FILES.json", files_json(listed("a", b"a"))),
             tar_file("a", b"a"),
-            tar_file("FILES.json", files_json(listed("../victim.txt", SECRET))),
+            tar_file("FILES.json", new),
         ]
 
         refused(sandbox, members, r"a path outside the collection: \.\./victim\.txt")
+
+    def test_listing_replaced_without_the_manifest(self, sandbox: Path) -> None:
+        # The manifest names the first FILES.json by its checksum, so a later one isn't what was built.
+        first = files_json(listed("a", b"a"))
+        members = [
+            tar_file("MANIFEST.json", manifest_json(files=first)),
+            tar_file("FILES.json", first),
+            tar_file("a", b"a"),
+            tar_file("FILES.json", files_json(listed("a", b"a"), listed("b", b"b"))),
+            tar_file("b", b"b"),
+        ]
+
+        refused(sandbox, members, "FILES.json doesn't match the checksum its MANIFEST.json gives")
+
+    def test_another_listing_name(self, sandbox: Path) -> None:
+        # The file MANIFEST.json names, read in a pass of its own, as it's stored before MANIFEST.json here.
+        files = files_json(listed("a", b"a"))
+        members = [
+            tar_file("OTHER.json", b"{}"),
+            tar_file("a", b"a"),
+            tar_file("FILES.json", files_json(listed("b", b"b"))),
+            tar_file("OTHER.json", files),
+            tar_file("MANIFEST.json", manifest_json(files=files, files_name="OTHER.json")),
+        ]
+
+        tree = extract(sandbox, members)
+
+        assert tree == {
+            "MANIFEST.json": f"file 644 {manifest_json(files=files, files_name='OTHER.json')!r}",
+            "OTHER.json": f"file 644 {files!r}",
+            "a": "file 644 b'a'",
+        }
+
+    @pytest.mark.parametrize("decoy_last", [False, True])
+    def test_another_listing_name_not_shadowed(self, sandbox: Path, decoy_last: bool) -> None:
+        # A FILES.json the manifest doesn't name is neither the list nor extracted, wherever it's stored, and what it
+        # lists that the named list doesn't, b, is left out.
+        files = files_json(listed("a", b"a"))
+        manifest = manifest_json(files=files, files_name="OTHER.json")
+        decoy = tar_file("FILES.json", files_json(listed("a", b"a"), listed("b", b"b")))
+        members = [
+            tar_file("MANIFEST.json", manifest),
+            tar_file("OTHER.json", files_json(listed("b", b"b"))),
+            *([] if decoy_last else [decoy]),
+            tar_file("a", b"a"),
+            tar_file("b", b"b"),
+            tar_file("OTHER.json", files),
+            *([decoy] if decoy_last else []),
+        ]
+
+        tree = extract(sandbox, members)
+
+        assert tree == {
+            "MANIFEST.json": f"file 644 {manifest!r}",
+            "OTHER.json": f"file 644 {files!r}",
+            "a": "file 644 b'a'",
+        }
+
+    def test_files_json_as_a_collection_file(self, sandbox: Path) -> None:
+        # With another list, FILES.json is a file like any other: extracted if listed, and checked against its sha256.
+        data = b'{"not": "a list"}'
+        files = files_json(listed("FILES.json", data))
+        manifest = manifest_json(files=files, files_name="OTHER.json")
+        members = [tar_file("MANIFEST.json", manifest), tar_file("OTHER.json", files), tar_file("FILES.json", data)]
+
+        assert extract(sandbox, members) == {
+            "MANIFEST.json": f"file 644 {manifest!r}",
+            "OTHER.json": f"file 644 {files!r}",
+            "FILES.json": f"file 644 {data!r}",
+        }
+
+        tampered = [*members, tar_file("FILES.json", b"changed")]
+        refused(
+            sandbox,
+            tampered,
+            "FILES.json in the artifact doesn't match its checksum in the collection's files manifest",
+        )
+
+    def test_listing_its_own_list(self, sandbox: Path) -> None:
+        # The named list can't list itself, as FILES.json can't, so it's refused as a build never does it.
+        files = files_json(listed("OTHER.json", b""))
+        members = [
+            tar_file("MANIFEST.json", manifest_json(files=files, files_name="OTHER.json")),
+            tar_file("OTHER.json", files),
+        ]
+
+        refused(sandbox, members, "OTHER.json, which a build never does")
+
+    @pytest.mark.parametrize(
+        ("files_name", "message"),
+        [
+            ("../OTHER.json", r"isn't one ansible-galaxy builds: file_manifest_file\.name"),
+            ("OTHER.json", "the artifact doesn't contain OTHER.json, which a collection needs$"),
+        ],
+    )
+    def test_another_listing_name_refused(self, sandbox: Path, files_name: str, message: str) -> None:
+        files = files_json()
+        members = [
+            tar_file("MANIFEST.json", manifest_json(files=files, files_name=files_name)),
+            tar_file("FILES.json", files),
+        ]
+
+        refused(sandbox, members, message)
+
+    def test_manifest_and_listing_replaced(self, sandbox: Path) -> None:
+        # Both replaced, the last manifest naming the last listing, as republishing a collection's files does.
+        new = files_json(listed("a", b"two"))
+        members = [
+            *collection(tar_file("a", b"one"), files=[listed("a", b"one")]),
+            tar_file("a", b"two"),
+            tar_file("FILES.json", new),
+            tar_file("MANIFEST.json", manifest_json(files=new)),
+        ]
+
+        assert extract(sandbox, members) == {**special_files(new), "a": "file 644 b'two'"}
 
     def test_manifest_replaced_by_another_collection(self, sandbox: Path) -> None:
         members = collection(tar_file("MANIFEST.json", manifest_json("ns.other")), files=[])
@@ -257,14 +376,14 @@ class TestAppended:
 
     @pytest.mark.parametrize("member", [tar_dir("MANIFEST.json"), tar_symlink("MANIFEST.json", "FILES.json")])
     def test_manifest_replaced_by_a_non_file(self, sandbox: Path, member: Member) -> None:
-        refused(sandbox, collection(member, files=[]), r"MANIFEST\.json in the artifact isn't a file")
+        refused(sandbox, collection(member, files=[]), r"MANIFEST\.json in the artifact isn't a file$")
 
     def test_files_json_replaced_by_a_symlink(self, sandbox: Path) -> None:
         members = collection(
             tar_file("other.json", files_json()), tar_symlink("FILES.json", "other.json"), files=[listed_dir("x")]
         )
 
-        refused(sandbox, members, r"FILES\.json in the artifact isn't a file")
+        refused(sandbox, members, r"FILES\.json in the artifact isn't a file$")
 
     def test_hardlink_replaced_by_a_file(self, sandbox: Path) -> None:
         members = collection(
@@ -284,7 +403,7 @@ class TestListing:
         # plugins is a symlink in the tarball, but FILES.json doesn't list it, so plugins/x's directory is made plainly.
         files = files_json(listed("plugins/x", b"x"))
         members = [
-            tar_file("MANIFEST.json", manifest_json()),
+            tar_file("MANIFEST.json", manifest_json(files=files)),
             tar_file("FILES.json", files),
             tar_file("sneaky.txt", b"sneaky"),
             tar_symlink("plugins", "../.."),
@@ -302,17 +421,17 @@ class TestListing:
     def test_listed_twice_differently(self, sandbox: Path) -> None:
         members = collection(tar_file("a", b"a"), files=[listed("a", b"a"), listed("a", b"b")])
 
-        refused(sandbox, members, "FILES.json lists a more than once, differently")
+        refused(sandbox, members, "files manifest lists a more than once, differently")
 
     def test_file_without_a_checksum(self, sandbox: Path) -> None:
         entry: dict[str, object] = {"name": "a", "ftype": "file", "chksum_type": None, "chksum_sha256": None}
 
-        refused(sandbox, collection(tar_file("a", b"a"), files=[entry]), r"FILES\.json has no checksum for a")
+        refused(sandbox, collection(tar_file("a", b"a"), files=[entry]), "files manifest has no checksum for a")
 
     def test_unreadable_entry(self, sandbox: Path) -> None:
         members = collection(tar_file("a", b"a"), files=[{"name": "a", "ftype": "fifo"}])
 
-        refused(sandbox, members, r"FILES\.json has an unreadable entry")
+        refused(sandbox, members, "files manifest has an unreadable entry")
 
     def test_long_name(self, sandbox: Path) -> None:
         # Longer than ustar's 100 bytes, so tarfile stores it in a pax header.
@@ -328,7 +447,7 @@ class TestListing:
         # Neither can be listed with a checksum that matches, as each depends on the other's content.
         members = collection(files=[listed(name, manifest_json())])
 
-        refused(sandbox, members, rf"FILES\.json lists {re.escape(name)}, which a build never does")
+        refused(sandbox, members, rf"files manifest lists {re.escape(name)}, which a build never does")
 
     @pytest.mark.parametrize("name", ["../x", "/abs", "a/../b", "./a", "a//b", "a/", "a\\b", "", "..", "a/.", "a/.."])
     @pytest.mark.parametrize("ftype", ["file", "dir"])
@@ -376,13 +495,26 @@ class TestManifest:
         [
             (manifest_json("ns.other"), "ns.other 1.0.0"),
             (manifest_json(version="2.0.0"), "ns.coll 2.0.0"),
-            (b"{}", "null.null null"),
+            (json.dumps({**json.loads(manifest_json()), "collection_info": {}}).encode(), "null.null null"),
         ],
     )
     def test_another_collection(self, sandbox: Path, manifest: bytes, found: str) -> None:
         members = [tar_file("MANIFEST.json", manifest), tar_file("FILES.json", files_json())]
 
         refused(sandbox, members, rf"MANIFEST\.json is for {re.escape(found)}")
+
+    @pytest.mark.parametrize(
+        ("manifest", "detail"),
+        [
+            (b"{}", "collection_info: expected an object"),
+            (json.dumps({**json.loads(manifest_json()), "format": 2}).encode(), "format: expected 1"),
+            (b"[]", "not a JSON object"),
+        ],
+    )
+    def test_not_as_ansible_galaxy_builds_it(self, sandbox: Path, manifest: bytes, detail: str) -> None:
+        members = [tar_file("MANIFEST.json", manifest), tar_file("FILES.json", files_json())]
+
+        refused(sandbox, members, rf"MANIFEST\.json isn't one ansible-galaxy builds: .*{re.escape(detail)}")
 
 
 class TestAmbiguousMembers:
@@ -437,7 +569,8 @@ class TestAmbiguousMembers:
     def test_pax_global_header_of_a_comment(self, sandbox: Path, records: list[tuple[str, str]]) -> None:
         # As git archive writes one, holding the commit: it describes the archive, so changes no member.
         files = files_json(listed("a", b"a"))
-        members = [global_header(records), tar_file("MANIFEST.json", manifest_json()), tar_file("FILES.json", files)]
+        manifest = manifest_json(files=files)
+        members = [global_header(records), tar_file("MANIFEST.json", manifest), tar_file("FILES.json", files)]
 
         assert extract(sandbox, [*members, tar_file("a", b"a")]) == {**special_files(files), "a": "file 644 b'a'"}
 
@@ -898,7 +1031,8 @@ def test_manifest_gives_the_collection(sandbox: Path) -> None:
 
 def test_manifest_without_the_fields(sandbox: Path) -> None:
     tarball = sandbox / "artifact.tar.gz"
-    _ = build_tarball(tarball, [tar_file("MANIFEST.json", b"{}"), tar_file("FILES.json", files_json())])
+    manifest = json.dumps({**json.loads(manifest_json()), "collection_info": {}}).encode()
+    _ = build_tarball(tarball, [tar_file("MANIFEST.json", manifest), tar_file("FILES.json", files_json())])
 
     with pytest.raises(ExtractError, match="no namespace, name and version") as e:
         _ = extract_artifact(tarball, sandbox / "work" / "collection")

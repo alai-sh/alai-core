@@ -631,12 +631,13 @@ class ExtractError(Exception):
     Attributes:
         kind: What's wrong, one of ``corrupt``, ``missing``, ``not_file``, ``not_dir``, ``path``, ``link``,
             ``escape``, ``unreadable``, ``checksum``, ``too_large``, ``json``, ``not_object``, ``manifest``,
-            ``manifest_fields``, ``files_list``, ``files_entry``, ``files_checksum``, ``files_special`` or
-            ``files_twice``.
+            ``manifest_invalid``, ``manifest_fields``, ``files_mismatch``, ``files_list``, ``files_entry``,
+            ``files_checksum``, ``files_special`` or ``files_twice``.
         entry: The entry it's about, or empty.
         detail: More about it, or empty. For ``corrupt`` and ``json`` it's why, for ``link`` the link's target, for
-            ``too_large`` the limit, for ``manifest`` the collection it names, and for ``files_entry`` the entry as
-            JSON.
+            ``too_large`` the limit, for ``manifest`` the collection it names, for ``manifest_invalid`` each problem,
+            for ``files_entry`` the entry as JSON, and for ``missing`` and ``not_file`` ``required`` when it's
+            ``MANIFEST.json`` or the collection's files manifest, which every artifact has.
     """
 
     kind: str
@@ -652,14 +653,17 @@ def artifact_extract(
 ) -> tuple[str, str, str]:
     """Extract a collection artifact as ``ansible-galaxy collection install`` does, with the GIL released.
 
-    Only ``MANIFEST.json``, ``FILES.json`` and what ``FILES.json`` lists are written, the last member of each name, as
-    ``tar -r`` appends a replacement. Both files and every listed entry are checked before anything is written, and
-    each file is checked against its SHA-256 as it's written. Every path and symlink must stay inside ``dest``, by name
+    Only ``MANIFEST.json``, the file it names and what that lists are written, the last member of each name, as
+    ``tar -r`` appends a replacement. ``MANIFEST.json`` must be as ansible-galaxy builds it, as
+    ``CollectionManifest.parse`` reads it, and the file it names, ``FILES.json`` as ansible-galaxy builds it, must
+    match the checksum it gives. Both files and every
+    listed entry are checked before anything is written, and each file is checked against its SHA-256 as it's
+    written. Every path and symlink must stay inside ``dest``, by name
     and on disk, as one symlink can lead another out.
 
     Files are ``0644``, or ``0755`` if the tarball marks them executable, and directories ``0755``, masked by the
     process umask. On Windows, modes aren't set, and a name Windows can't hold safely, such as ``aux.py``, is
-    refused as ``path``. A symlink is made as a link to a directory or a file as ``FILES.json`` lists it. If Windows
+    refused as ``path``. A symlink is made as a link to a directory or a file as the files manifest lists it. If Windows
     won't make links, as without Developer Mode, what it points to is copied instead.
 
     Args:
@@ -1100,7 +1104,8 @@ class CollectionMetadata:
 
 class CollectionManifest:
     """A built collection's ``MANIFEST.json``, as ansible-galaxy builds it, with format 1, the only one there is: its
-    metadata as ``collection_info``, and ``FILES.json``'s sha256 in ``file_manifest_file``.
+    metadata as ``collection_info``, and in ``file_manifest_file`` the file listing the collection's files and its
+    sha256. That's always ``FILES.json`` today, but any name is taken, in case ansible-galaxy allows others.
 
     Example:
         >>> data = (
@@ -1120,8 +1125,9 @@ class CollectionManifest:
         - ``collection_info`` is an object. Its values are checked only when asked for, as
           ``CollectionMetadata`` says.
         - ``format`` is 1.
-        - ``file_manifest_file`` is an object with ``name`` ``FILES.json``, ``ftype`` ``file``, ``chksum_type``
-          ``sha256``, ``chksum_sha256`` a sha256 in lowercase hex, and ``format`` 1.
+        - ``file_manifest_file`` is an object with ``name`` a file name at the top of the collection, other than
+          ``MANIFEST.json``, ``ftype``
+          ``file``, ``chksum_type`` ``sha256``, ``chksum_sha256`` a sha256 in lowercase hex, and ``format`` 1.
 
         Args:
             data: The file.
@@ -1138,8 +1144,12 @@ class CollectionManifest:
     def collection_info(self) -> CollectionMetadata:
         """The collection's metadata."""
     @property
+    def files_name(self) -> str:
+        """The file listing the collection's files, ``FILES.json`` as ansible-galaxy builds it: a file name at the top
+        of the collection, other than ``MANIFEST.json``."""
+    @property
     def files_sha256(self) -> str:
-        """``FILES.json``'s sha256, in lowercase hex, which ansible-galaxy checks the file against."""
+        """That file's sha256, in lowercase hex."""
 
 class CollectionRemoval:
     """When a plugin is or was removed, and what to say about it, from a routing entry's ``deprecation`` or

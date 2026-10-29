@@ -6,6 +6,7 @@ pub mod collection;
 pub mod extract;
 pub mod index;
 mod json;
+pub mod markup;
 mod names;
 pub mod pep440;
 pub mod plugins;

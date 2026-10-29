@@ -576,8 +576,8 @@ class PluginEntry:
     def short_description(self) -> str | None:
         """One line from its documentation."""
     @property
-    def routing(self) -> dict[str, object] | None:
-        """Its entry in the collection's ``plugin_routing``, as the index copied it."""
+    def routing(self) -> CollectionRoutingEntry | None:
+        """Its entry in the collection's ``plugin_routing``, as the index copied it, with ``raw`` as written."""
     @property
     def line(self) -> bytes | None:
         """The line it was read from, unknown fields included, or None if it wasn't read."""
@@ -935,7 +935,9 @@ class YamlWarning(UserWarning):
     line: int
     column: int
 
-def yaml_loads(text: str, /, *, name: str | None, on_warning: _c.Callable[[YamlWarning], object] | None) -> object:
+def yaml_loads(
+    text: str, /, *, name: str | None = None, on_warning: _c.Callable[[YamlWarning], object] | None = ...
+) -> object:
     """Read a YAML document as Ansible reads it through PyYAML, with libyaml's parser, the GIL released while parsing.
 
     The values are plain and given as they are, with no schema. Mappings are ``dict``, sequences are ``list``, and
@@ -959,10 +961,11 @@ def yaml_loads(text: str, /, *, name: str | None, on_warning: _c.Callable[[YamlW
 
     Args:
         text: The document. A second document in it is an error, as PyYAML's ``load`` gives.
-        name: Where the document came from, such as its file, or None. Each error and warning message starts with it,
-            as ``name: message``.
-        on_warning: Called with each ``YamlWarning`` once the document is read, or None to ignore them. If it raises,
-            so does this.
+        name: Where the document came from, such as its file. Each error and warning message starts with it, as
+            ``name: message``.
+        on_warning: Called with each ``YamlWarning`` once the document is read. If it raises, so does this. Left out,
+            each goes to ``warnings.warn``, looked up when it's called, so the warning filters apply. None ignores
+            them.
 
     Returns:
         The document's value.
@@ -972,17 +975,17 @@ def yaml_loads(text: str, /, *, name: str | None, on_warning: _c.Callable[[YamlW
             text holds, or isn't valid Unicode, such as a string decoded with ``surrogateescape``.
 
     Example:
-        >>> yaml_loads("required: no\\nversion_added: 2.10\\nmode: 0644\\nsince: 2.9\\n", name=None, on_warning=None)
+        >>> yaml_loads("required: no\\nversion_added: 2.10\\nmode: 0644\\nsince: 2.9\\n")
         {'required': False, 'version_added': '2.10', 'mode': '0644', 'since': 2.9}
     """
 
 def yaml_select(
     text: str,
-    keys: _c.Sequence[str],
+    keys: _c.Iterable[str],
     /,
     *,
-    name: str | None,
-    on_warning: _c.Callable[[YamlWarning], object] | None,
+    name: str | None = None,
+    on_warning: _c.Callable[[YamlWarning], object] | None = ...,
 ) -> dict[str, object] | None:
     """Read only some top-level keys of a YAML document, skipping the work of building large values that aren't wanted.
 
@@ -990,7 +993,8 @@ def yaml_select(
 
     Args:
         text: The document.
-        keys: The top-level keys wanted. One the document doesn't have is left out.
+        keys: The top-level keys wanted, any iterable of strings but a str itself. One the document doesn't have is
+            left out.
         name: As for ``yaml_loads``.
         on_warning: As for ``yaml_loads``, for warnings about the keys wanted.
 
@@ -999,9 +1003,268 @@ def yaml_select(
 
     Raises:
         YamlError: As for ``yaml_loads``.
+        TypeError: ``keys`` is a str, or has something that isn't one.
 
     Example:
         >>> text = "short_description: Copy files\\noptions: {src: {type: path}}\\n"
-        >>> yaml_select(text, ["short_description"], name=None, on_warning=None)
+        >>> yaml_select(text, ["short_description"])
         {'short_description': 'Copy files'}
     """
+
+class CollectionMetadataError(ValueError):
+    """A collection's metadata breaks ansible-galaxy's rules, or can't be read at all. ``str()`` gives each problem
+    on a line of its own.
+
+    Attributes:
+        errors: Each problem, as the field it's about, such as ``version`` or ``dependencies.ns.coll``, or None for
+            the whole file, and why.
+    """
+
+    errors: tuple[tuple[str | None, str], ...]
+
+def collection_check_name(name: str, /) -> None:
+    """Check a collection's full name, ``namespace.name``, as ansible-core's ``is_valid_collection_name`` and the
+    index spec do: two lowercase Python identifiers that aren't keywords.
+
+    Args:
+        name: The name.
+
+    Raises:
+        ValueError: It isn't valid. The message says why, such as that collection names are lowercase.
+    """
+
+class CollectionMetadata:
+    """What ``galaxy.yml``, or ``MANIFEST.json``'s ``collection_info``, says about a collection.
+
+    ``get`` gives a value as written. The ``get_*`` methods check one by the rules ansible-galaxy installs with, so a
+    caller checks only the values it needs.
+
+    Example:
+        >>> data = b"namespace: ns\\nname: coll\\nversion: 1.0\\ndependencies: {a.b: '>=1'}\\n"
+        >>> m = CollectionMetadata.from_galaxy_yml(data)
+        >>> m.get_fqcn(), m.get("version"), m.get_dependencies()
+        ('ns.coll', 1.0, {'a.b': VersionReq('>=1')})
+        >>> m.get_version()
+        Traceback (most recent call last):
+        ...
+        alai_core.collection.MetadataError: version: 'version' is required and must be a string, such as '1.0.0'
+    """
+
+    @classmethod
+    def from_galaxy_yml(
+        cls, data: bytes, *, name: str | None = None, on_warning: _c.Callable[[YamlWarning], object] | None = ...
+    ) -> CollectionMetadata:
+        """Read ``galaxy.yml``, as ``yaml_loads`` reads YAML.
+
+        Args:
+            data: The file.
+            name: Where it came from, such as its path, put before each error and warning message, including those
+                of the methods that check it.
+            on_warning: As for ``yaml_loads``. Left out, each warning goes to ``warnings.warn``. None ignores them.
+                The only warning is the YAML's, a duplicate key. ansible-galaxy's build also warns about keys
+                outside its schema, which this doesn't, so a caller that builds checks them itself.
+
+        Returns:
+            The metadata.
+
+        Raises:
+            YamlError: The file isn't UTF-8, or isn't YAML Ansible could read.
+            CollectionMetadataError: Its top level isn't a mapping.
+        """
+    def get(self, key: str, /, default: object = None) -> object:
+        """The top-level value ``key`` names, such as ``version`` or ``build_ignore``, as written, or ``default`` if it
+        isn't set. In ``galaxy.yml``, ``version: 1.0`` is the float ``1.0``, as YAML reads it."""
+    def __contains__(self, key: str, /) -> bool:
+        """Whether ``key`` is set at the top level, even to null."""
+    def get_fqcn(self) -> str:
+        """The collection's full name, ``namespace.name``.
+
+        Raises:
+            CollectionMetadataError: ``namespace`` or ``name`` isn't a string, or together they aren't a valid
+                collection name, lowercase and not a Python keyword.
+        """
+    def get_version(self) -> SemverVersion:
+        """The version.
+
+        Raises:
+            CollectionMetadataError: It isn't a SemVer string.
+        """
+    def get_dependencies(self) -> dict[str, SemverVersionReq]:
+        """Each dependency's requirement, by name. Empty if there are none.
+
+        Raises:
+            CollectionMetadataError: ``dependencies`` isn't a mapping, or has a name that isn't a valid collection
+                name or is this collection's own, or a requirement ansible-galaxy can't read, such as ``^1.0.0``.
+                Every problem is reported rather than the first.
+        """
+
+class CollectionManifest:
+    """A built collection's ``MANIFEST.json``, as ansible-galaxy builds it, with format 1, the only one there is: its
+    metadata as ``collection_info``, and ``FILES.json``'s sha256 in ``file_manifest_file``.
+
+    Example:
+        >>> data = (
+        ...     b'{"collection_info": {"namespace": "ns", "name": "coll", "version": "1.0.0"}, "format": 1, '
+        ...     b'"file_manifest_file": {"name": "FILES.json", "ftype": "file", "chksum_type": "sha256", '
+        ...     b'"chksum_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a", "format": 1}}'
+        ... )
+        >>> CollectionManifest.parse(data).collection_info.get_version()
+        Version('1.0.0')
+    """
+
+    @classmethod
+    def parse(cls, data: bytes, *, name: str | None = None) -> CollectionManifest:
+        """Read ``MANIFEST.json``, refusing one ansible-galaxy wouldn't have built. Every problem is reported rather
+        than the first:
+
+        - ``collection_info`` is an object. Its values are checked only when asked for, as
+          ``CollectionMetadata`` says.
+        - ``format`` is 1.
+        - ``file_manifest_file`` is an object with ``name`` ``FILES.json``, ``ftype`` ``file``, ``chksum_type``
+          ``sha256``, ``chksum_sha256`` a sha256 in lowercase hex, and ``format`` 1.
+
+        Args:
+            data: The file.
+            name: As for ``CollectionMetadata.from_galaxy_yml``, for ``collection_info`` too.
+
+        Returns:
+            The manifest.
+
+        Raises:
+            ValueError: The file isn't a JSON object.
+            CollectionMetadataError: It breaks the rules.
+        """
+    @property
+    def collection_info(self) -> CollectionMetadata:
+        """The collection's metadata."""
+    @property
+    def files_sha256(self) -> str:
+        """``FILES.json``'s sha256, in lowercase hex, which ansible-galaxy checks the file against."""
+
+class CollectionRemoval:
+    """When a plugin is or was removed, and what to say about it, from a routing entry's ``deprecation`` or
+    ``tombstone``. Each field is None unless it's a string."""
+
+    @property
+    def removal_version(self) -> str | None:
+        """The collection version it's removed in."""
+    @property
+    def removal_date(self) -> str | None:
+        """The date it's removed on, such as ``2024-01-01``."""
+    @property
+    def warning_text(self) -> str | None:
+        """What to tell the user."""
+
+class CollectionRoutingEntry:
+    """A plugin's ``plugin_routing`` entry, with the fields ansible-test's ``runtime-metadata`` schema gives it. More
+    may be added to the format, so ``raw`` keeps the entry as written. Each field is None unless it has the type the
+    schema gives it."""
+
+    @property
+    def redirect(self) -> str | None:
+        """The full name of the plugin used in its place."""
+    @property
+    def action_plugin(self) -> str | None:
+        """For a module, the action plugin that runs it."""
+    @property
+    def deprecation(self) -> CollectionRemoval | None:
+        """When the plugin will be removed."""
+    @property
+    def tombstone(self) -> CollectionRemoval | None:
+        """When the plugin was removed."""
+    @property
+    def raw(self) -> dict[str, object]:
+        """The entry as written, every scalar a string. An alias is the same object as its anchor."""
+
+class CollectionRuntime:
+    """A collection's ``meta/runtime.yml``, read as ansible-core reads it, with PyYAML's ``BaseLoader``.
+
+    Every scalar is the string written, because that's how ansible-core loads the file. So ``requires_ansible: 2.15``
+    is ``"2.15"``, ``yes`` is ``"yes"``, ``~`` is ``"~"``, and a ``<<`` key isn't merged. An empty file is an empty
+    mapping, and so is a top level that isn't a mapping, which ansible-core can't load.
+
+    Example:
+        >>> data = b"requires_ansible: '>=2.17'\\nplugin_routing: {modules: {old: {redirect: ns.c.new}}}\\n"
+        >>> runtime = CollectionRuntime.parse(data)
+        >>> runtime.get_requires_ansible(), runtime.plugin_routing["modules"]["old"].redirect
+        (SpecifierSet('>=2.17'), 'ns.c.new')
+    """
+
+    @classmethod
+    def parse(
+        cls,
+        data: bytes,
+        *,
+        name: str | None = None,
+        on_warning: _c.Callable[[YamlWarning], object] | None = ...,
+    ) -> CollectionRuntime:
+        """Read ``meta/runtime.yml``.
+
+        Args:
+            data: The file.
+            name: As for ``CollectionMetadata.from_galaxy_yml``.
+            on_warning: As for ``CollectionMetadata.from_galaxy_yml``.
+
+        Returns:
+            The runtime.
+
+        Raises:
+            YamlError: The file isn't UTF-8, or isn't YAML Ansible could read.
+        """
+    @property
+    def requires_ansible(self) -> object | None:
+        """``requires_ansible`` as written, or None if it isn't set."""
+    def get_requires_ansible(self) -> Pep440SpecifierSet | None:
+        """The ansible-core versions the collection supports, or None if ``requires_ansible`` isn't set.
+
+        Raises:
+            CollectionMetadataError: It isn't a PEP 440 specifier set, which ansible-core only warns about.
+        """
+    @property
+    def plugin_routing(self) -> dict[str, dict[str, CollectionRoutingEntry]]:
+        """Each plugin type's routing, such as ``modules``, by plugin name. Only entries that are mappings are kept."""
+
+class CollectionEdaRuntime:
+    """A collection's ``extensions/eda/eda_runtime.yml``, read as ansible-rulebook reads it, from 1.2.1, for its event
+    sources and filters. ansible-rulebook never reads ``meta/runtime.yml``.
+
+    Its rules differ from ansible-core's for ``meta/runtime.yml``. It reads the file with ``yaml.safe_load``, and
+    refuses a whole file that's empty, isn't a mapping, or has something in it but no ``plugin_routing`` mapping,
+    which is read as empty here. It refuses an entry that isn't a mapping or has a ``deprecation``, ``tombstone`` or
+    ``redirect`` of the wrong type, which is left out here. One that's empty, null or false is taken as not there.
+    ansible-rulebook reads only ``event_source`` and ``event_filter``, but every type is kept, as
+    ``CollectionRuntime`` keeps them, so one it adds needs no change here.
+    ansible-rulebook loads each value typed, so ``removal_version: 3.0`` is a float to it. The values here are still
+    the strings written, so they match what ``CollectionRuntime`` gives for ``meta/runtime.yml``.
+
+    Example:
+        >>> data = b"plugin_routing: {event_source: {old: {redirect: ns.c.new}}}\\n"
+        >>> CollectionEdaRuntime.parse(data).plugin_routing["event_source"]["old"].redirect
+        'ns.c.new'
+    """
+
+    @classmethod
+    def parse(
+        cls,
+        data: bytes,
+        *,
+        name: str | None = None,
+        on_warning: _c.Callable[[YamlWarning], object] | None = ...,
+    ) -> CollectionEdaRuntime:
+        """Read ``eda_runtime.yml``.
+
+        Args:
+            data: The file.
+            name: As for ``CollectionMetadata.from_galaxy_yml``.
+            on_warning: As for ``CollectionMetadata.from_galaxy_yml``.
+
+        Returns:
+            The runtime.
+
+        Raises:
+            YamlError: The file isn't UTF-8, or isn't YAML.
+        """
+    @property
+    def plugin_routing(self) -> dict[str, dict[str, CollectionRoutingEntry]]:
+        """Each plugin type's routing, such as ``event_source``, by plugin name, as for
+        ``CollectionRuntime.plugin_routing``."""

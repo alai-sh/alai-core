@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import collections.abc as _c
 import hashlib
 import json
 from pathlib import Path
@@ -281,9 +282,9 @@ class TestCollections:
             (lambda: Collections({"Not.Valid": CollectionEntry(TIME)}), "invalid collection name 'Not.Valid'"),
         ],
     )
-    def test_writer_checks(self, make: object, match: str) -> None:
+    def test_writer_checks(self, make: _c.Callable[[], object], match: str) -> None:
         with pytest.raises(ValueError, match=match):
-            _ = make()  # pyright: ignore[reportCallIssue]
+            _ = make()
 
     def test_read_leniently_written_strictly(self) -> None:
         parsed = Collections.parse(b'{"v": 1, "namespaces": {"ns": {"coll": {}}}}')

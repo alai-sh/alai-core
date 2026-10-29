@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyList, PyString, PyType};
 use serde_json::{Map, Value};
 
+use crate::collection::RoutingEntry;
 use crate::value_error;
 
 /// The Python objects a search's caller reads are made once, with the entry.
@@ -111,9 +112,15 @@ impl PluginEntry {
         self.entry.short_description()
     }
 
+    /// Built when read, as a search makes many entries whose routing nothing reads.
     #[getter]
-    fn routing(&self, py: Python<'_>) -> Option<Py<PyAny>> {
-        self.routing.as_ref().map(|routing| routing.clone_ref(py))
+    fn routing(&self, py: Python<'_>) -> Option<RoutingEntry> {
+        let raw = self.routing.as_ref()?;
+        let entry = alai_core::collection::RoutingEntry::from_json(self.entry.routing()?);
+        Some(RoutingEntry {
+            entry,
+            raw: raw.clone_ref(py),
+        })
     }
 
     #[getter]

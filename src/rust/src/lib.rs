@@ -2,6 +2,7 @@
 // MIT License (see LICENSE or https://opensource.org/licenses/MIT)
 
 mod artifact;
+mod collection;
 mod index;
 mod pep440;
 mod plugins;
@@ -28,6 +29,14 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("Pep440SpecifierSet", py.get_type::<pep440::SpecifierSet>())?;
     m.add("ExtractError", py.get_type::<artifact::ExtractError>())?;
     m.add_function(wrap_pyfunction!(artifact::artifact_extract, m)?)?;
+    m.add("CollectionMetadata", py.get_type::<collection::Metadata>())?;
+    m.add("CollectionManifest", py.get_type::<collection::Manifest>())?;
+    m.add("CollectionRuntime", py.get_type::<collection::Runtime>())?;
+    m.add("CollectionEdaRuntime", py.get_type::<collection::EdaRuntime>())?;
+    m.add("CollectionRoutingEntry", py.get_type::<collection::RoutingEntry>())?;
+    m.add("CollectionRemoval", py.get_type::<collection::Removal>())?;
+    m.add("CollectionMetadataError", py.get_type::<collection::MetadataError>())?;
+    m.add_function(wrap_pyfunction!(collection::collection_check_name, m)?)?;
     m.add("IndexConfig", py.get_type::<index::Config>())?;
     m.add("IndexCollections", py.get_type::<index::Collections>())?;
     m.add("IndexCollectionEntry", py.get_type::<index::CollectionEntry>())?;

@@ -208,6 +208,14 @@ class TestSelect:
             "alias": {"a": {"b": [1]}},
         }
 
+    def test_any_iterable(self) -> None:
+        assert select("a: 1\nb: 2\n", (k for k in ("b",))) == {"b": 2}
+        assert select("a: 1\nb: 2\n", {"a"}) == {"a": 1}
+
+    def test_not_a_str(self) -> None:
+        with pytest.raises(TypeError, match="keys must be an iterable of strings, not a str"):
+            _ = select("a: 1\n", "a")
+
     def test_not_a_mapping(self) -> None:
         assert select("- a\n", ["a"]) is None
         assert select("", ["a"]) is None

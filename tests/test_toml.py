@@ -92,7 +92,7 @@ class TestLoads:
 
     @pytest.mark.skipif(sys.version_info < (3, 11), reason="tomllib is Python 3.11 and later")
     def test_as_tomllib(self) -> None:
-        import tomllib  # pyright: ignore[reportUnreachable]
+        import tomllib  # pyright: ignore[reportMissingTypeStubs]
 
         text = (
             '[project]\ncollections = ["a.a", \'b.b>=1\']  # c\n"quoted key" = """multi\nline"""\n'
@@ -136,7 +136,7 @@ class TestRead:
 
 class TestDumps:
     def test_layout(self) -> None:
-        table = {
+        table: dict[str, object] = {
             "version": 1,
             "sources": {"a.b": {"index": "x", "editable": True}},
             "project": {"collections": ["c.c"], "groups": {"test": {"collections": []}}},

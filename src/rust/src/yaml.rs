@@ -1,9 +1,9 @@
 // Copyright: (c) 2026, Jordan Borean (@jborean93) <jborean93@gmail.com>
 // MIT License (see LICENSE or https://opensource.org/licenses/MIT)
 
-use alai_core::yaml::{self, Document, Value, YamlError as Error};
+use alai_core::yaml::{self, Document, Value, Warning, YamlError as Error};
 use pyo3::create_exception;
-use pyo3::exceptions::{PyUserWarning, PyValueError};
+use pyo3::exceptions::{PyTypeError, PyUserWarning, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 
@@ -20,8 +20,27 @@ create_exception!(
     "Something in a document worth knowing about that didn't stop it being read."
 );
 
+/// `on_warning` as given: left out, which is `warnings.warn`, None to ignore warnings, or a callable.
+pub(crate) enum OnWarning<'py> {
+    Default,
+    Silent,
+    Call(Bound<'py, PyAny>),
+}
+
+impl<'py> FromPyObject<'_, 'py> for OnWarning<'py> {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
+        Ok(if ob.is_none() {
+            OnWarning::Silent
+        } else {
+            OnWarning::Call(ob.to_owned())
+        })
+    }
+}
+
 /// `message` after `name`, as `name: message`, when there is one.
-fn named(name: Option<&str>, message: String) -> String {
+pub(crate) fn named(name: Option<&str>, message: String) -> String {
     match name {
         Some(name) => format!("{name}: {message}"),
         None => message,
@@ -45,7 +64,7 @@ fn utf8<'a>(py: Python<'_>, text: &'a Bound<'_, PyString>, name: Option<&str>) -
     })
 }
 
-fn yaml_error(py: Python<'_>, err: Error, name: Option<&str>) -> PyErr {
+pub(crate) fn yaml_error(py: Python<'_>, err: Error, name: Option<&str>) -> PyErr {
     let raised = YamlError::new_err(named(name, err.to_string()));
     let value = raised.value(py);
     let set = value
@@ -56,31 +75,36 @@ fn yaml_error(py: Python<'_>, err: Error, name: Option<&str>) -> PyErr {
 }
 
 #[pyfunction]
-#[pyo3(signature = (text, *, name, on_warning))]
+#[pyo3(signature = (text, /, *, name=None, on_warning=OnWarning::Default))]
 pub(crate) fn yaml_loads<'py>(
     py: Python<'py>,
     text: &Bound<'py, PyString>,
     name: Option<&str>,
-    on_warning: Option<Bound<'py, PyAny>>,
+    on_warning: OnWarning<'py>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let text = utf8(py, text, name)?;
     let doc = py
         .detach(|| yaml::loads(text))
         .map_err(|err| yaml_error(py, err, name))?;
     let value = Converter::new(&doc).value(py, &doc.root)?;
-    warn(py, &doc, name, on_warning)?;
+    warn(py, &doc.warnings, name, on_warning)?;
     Ok(value)
 }
 
 #[pyfunction]
-#[pyo3(signature = (text, keys, *, name, on_warning))]
+#[pyo3(signature = (text, keys, /, *, name=None, on_warning=OnWarning::Default))]
 pub(crate) fn yaml_select<'py>(
     py: Python<'py>,
     text: &Bound<'py, PyString>,
-    keys: Vec<String>,
+    keys: &Bound<'py, PyAny>,
     name: Option<&str>,
-    on_warning: Option<Bound<'py, PyAny>>,
+    on_warning: OnWarning<'py>,
 ) -> PyResult<Option<Bound<'py, PyAny>>> {
+    // A str is an iterable of strings too, but never what's meant.
+    if keys.is_instance_of::<PyString>() {
+        return Err(PyTypeError::new_err("keys must be an iterable of strings, not a str"));
+    }
+    let keys: Vec<String> = keys.try_iter()?.map(|key| key?.extract()).collect::<PyResult<_>>()?;
     let text = utf8(py, text, name)?;
     let wanted: Vec<&str> = keys.iter().map(String::as_str).collect();
     let doc = py
@@ -90,16 +114,24 @@ pub(crate) fn yaml_select<'py>(
         return Ok(None);
     };
     let value = Converter::new(&doc).value(py, &doc.root)?;
-    warn(py, &doc, name, on_warning)?;
+    warn(py, &doc.warnings, name, on_warning)?;
     Ok(Some(value))
 }
 
 /// Hand each warning to `on_warning`, once the document is built, so the parse never waits on Python.
-fn warn(py: Python<'_>, doc: &Document, name: Option<&str>, on_warning: Option<Bound<'_, PyAny>>) -> PyResult<()> {
-    let Some(on_warning) = on_warning else {
-        return Ok(());
+pub(crate) fn warn(
+    py: Python<'_>,
+    warnings: &[Warning],
+    name: Option<&str>,
+    on_warning: OnWarning<'_>,
+) -> PyResult<()> {
+    let on_warning = match on_warning {
+        OnWarning::Silent => return Ok(()),
+        OnWarning::Call(f) => f,
+        OnWarning::Default if warnings.is_empty() => return Ok(()),
+        OnWarning::Default => py.import("warnings")?.getattr("warn")?,
     };
-    for warning in &doc.warnings {
+    for warning in warnings {
         let message = named(
             name,
             format!(
@@ -119,20 +151,20 @@ fn warn(py: Python<'_>, doc: &Document, name: Option<&str>, on_warning: Option<B
 
 /// Builds Python objects from a document, each anchored node once, so every alias to it is the same object, as
 /// PyYAML gives it.
-struct Converter<'d> {
+pub(crate) struct Converter<'d> {
     doc: &'d Document,
     built: Vec<Option<Py<PyAny>>>,
 }
 
 impl<'d> Converter<'d> {
-    fn new(doc: &'d Document) -> Self {
+    pub(crate) fn new(doc: &'d Document) -> Self {
         Converter {
             doc,
             built: (0..doc.anchors.len()).map(|_| None).collect(),
         }
     }
 
-    fn value<'py>(&mut self, py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
+    pub(crate) fn value<'py>(&mut self, py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
         Ok(match value {
             Value::Null => py.None().into_bound(py),
             Value::Bool(b) => PyBool::new(py, *b).to_owned().into_any(),

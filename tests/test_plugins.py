@@ -46,7 +46,8 @@ class TestPluginEntry:
         assert parsed is not None
         assert (parsed.type, parsed.name, parsed.collection, parsed.fqcn) == ("module", "user", "a.a", "a.a.user")
         assert (parsed.since, parsed.until, parsed.short_description) == ("1.0.0", "2.0.0", "Users")
-        assert parsed.routing == {"redirect": "b.b.user"}
+        assert parsed.routing is not None
+        assert (parsed.routing.redirect, parsed.routing.raw) == ("b.b.user", {"redirect": "b.b.user"})
         assert parsed.line == text
 
     def test_fields_not_strings(self) -> None:
@@ -79,6 +80,28 @@ class TestPluginEntry:
         }
         assert entry.to_json() == json.dumps(expected, separators=(",", ":"), ensure_ascii=False)
         assert PluginEntry.parse(entry.to_json().encode()) == entry
+
+    def test_routing_typed(self) -> None:
+        routing = {
+            "deprecation": {"removal_date": "2030-01-01", "warning_text": "soon"},
+            "tombstone": {"removal_version": 2.0},
+            "name": "a mistake for redirect",
+        }
+
+        entry = PluginEntry.parse(PluginEntry("module", "x", "a.a", routing=routing).to_json().encode())
+
+        assert entry is not None
+        assert entry.routing is not None
+        assert entry.routing.redirect is None
+        assert entry.routing.deprecation is not None
+        assert (entry.routing.deprecation.removal_date, entry.routing.deprecation.warning_text) == (
+            "2030-01-01",
+            "soon",
+        )
+        # Not a string, as an older index could have written it, so not given, but kept as written.
+        assert entry.routing.tombstone is not None
+        assert entry.routing.tombstone.removal_version is None
+        assert entry.routing.raw == routing
 
     def test_routing_only(self) -> None:
         written = PluginEntry("module", "x", "a.a", routing=MappingProxyType({"redirect": "b.b.x"})).to_json()

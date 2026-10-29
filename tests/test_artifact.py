@@ -305,7 +305,7 @@ class TestListing:
         refused(sandbox, members, "FILES.json lists a more than once, differently")
 
     def test_file_without_a_checksum(self, sandbox: Path) -> None:
-        entry = {"name": "a", "ftype": "file", "chksum_type": None, "chksum_sha256": None}
+        entry: dict[str, object] = {"name": "a", "ftype": "file", "chksum_type": None, "chksum_sha256": None}
 
         refused(sandbox, collection(tar_file("a", b"a"), files=[entry]), r"FILES\.json has no checksum for a")
 

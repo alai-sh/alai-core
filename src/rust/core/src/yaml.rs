@@ -94,10 +94,33 @@ impl YamlError {
     }
 }
 
+/// `data` as text, or an error saying where it stops being UTF-8.
+pub fn decode(data: &[u8]) -> Result<&str, YamlError> {
+    std::str::from_utf8(data).map_err(|e| {
+        let before = String::from_utf8_lossy(&data[..e.valid_up_to()]);
+        let line = before.matches('\n').count() as u64 + 1;
+        let column = before.rsplit('\n').next().unwrap_or(&before).chars().count() as u64 + 1;
+        YamlError {
+            message: "not UTF-8".to_owned(),
+            line: Some(line),
+            column: Some(column),
+        }
+    })
+}
+
 /// Read a single YAML document. An empty stream is `Value::Null`, and a second document is an error, as PyYAML's
 /// `load` gives.
 pub fn loads(text: &str) -> Result<Document, YamlError> {
     Builder::new(None).run(text).map(|(document, _)| document)
+}
+
+/// Read a single YAML document as PyYAML's `BaseLoader` does, as ansible-core reads `meta/runtime.yml`: every scalar is
+/// the string written, tags and all, so `yes`, `~` and `2.15` are `"yes"`, `"~"` and `"2.15"`, and a `<<` key isn't
+/// merged. An empty stream is still `Value::Null`.
+pub fn loads_untyped(text: &str) -> Result<Document, YamlError> {
+    let mut builder = Builder::new(None);
+    builder.typed = false;
+    builder.run(text).map(|(document, _)| document)
 }
 
 /// Read only the top-level keys `keys` of a document whose root is a mapping, building nothing else, for a caller
@@ -129,6 +152,8 @@ enum Frame {
 
 struct Builder<'a> {
     select: Option<&'a [&'a str]>,
+    /// Whether scalars are resolved and `<<` merged, or every scalar kept as its text.
+    typed: bool,
     stack: Vec<Frame>,
     anchors: Vec<Value>,
     names: HashMap<String, usize>,
@@ -141,6 +166,7 @@ impl<'a> Builder<'a> {
     fn new(select: Option<&'a [&'a str]>) -> Self {
         Builder {
             select,
+            typed: true,
             stack: Vec::new(),
             anchors: Vec::new(),
             names: HashMap::new(),
@@ -210,12 +236,16 @@ impl<'a> Builder<'a> {
                     {
                         value.pop();
                     }
-                    merge_key = style == ScalarStyle::Plain && tag.is_none() && value == "<<";
+                    merge_key = self.typed && style == ScalarStyle::Plain && tag.is_none() && value == "<<";
                     let built = if self.skipping() && anchor.is_none() {
                         Value::Null
                     } else {
                         self.spend(mark)?;
-                        scalar(value, style, tag)
+                        if self.typed {
+                            scalar(value, style, tag)
+                        } else {
+                            Value::String(value)
+                        }
                     };
                     self.anchored(anchor, built)
                 }
@@ -829,5 +859,28 @@ mod tests {
                 (s("o"), Value::Int(3))
             ])
         );
+    }
+
+    #[test]
+    fn untyped_as_base_loader() {
+        let text = "a: true\nb: yes\nc: ~\nd:\ne: 2.15\nf: !!int 5\ng: &x {p: 1}\nh: {<<: *x, q: 2}\n";
+        let doc = loads_untyped(text).unwrap();
+        let Value::Mapping(entries) = &doc.root else { panic!() };
+        let scalars: Vec<_> = entries[..6].iter().map(|(_, v)| v.clone()).collect();
+        assert_eq!(scalars, [s("true"), s("yes"), s("~"), s(""), s("2.15"), s("5")]);
+        // A merge key stays a key, holding the mapping.
+        let Value::Mapping(h) = &entries[7].1 else { panic!() };
+        assert_eq!(h[0], (s("<<"), Value::Alias(0)));
+        assert_eq!(loads_untyped("").unwrap().root, Value::Null);
+    }
+
+    #[test]
+    fn decode_says_where() {
+        let err = decode(b"a: 1\nb: caf\xe9\n").unwrap_err();
+        assert_eq!(
+            (err.message.as_str(), err.line, err.column),
+            ("not UTF-8", Some(2), Some(7))
+        );
+        assert_eq!(decode("é: x".as_bytes()).unwrap(), "é: x");
     }
 }

@@ -2,6 +2,7 @@
 // MIT License (see LICENSE or https://opensource.org/licenses/MIT)
 
 pub mod artifact;
+pub mod collection;
 pub mod index;
 mod json;
 mod names;

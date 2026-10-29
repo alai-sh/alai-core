@@ -142,6 +142,11 @@ impl Manifest {
     }
 
     #[getter]
+    fn files_name(&self) -> &str {
+        &self.read.files_name
+    }
+
+    #[getter]
     fn files_sha256(&self) -> &str {
         &self.read.files_sha256
     }

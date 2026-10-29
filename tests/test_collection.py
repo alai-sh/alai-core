@@ -136,7 +136,13 @@ class TestManifest:
         m = parsed.collection_info
         assert [m.get(k) for k in ("namespace", "name", "version", "foo")] == ["ns", "c", "1.0.0", 1]
         assert (m.get_fqcn(), m.get_version()) == ("ns.c", Version("1.0.0"))
-        assert parsed.files_sha256 == SHA256
+        assert (parsed.files_name, parsed.files_sha256) == ("FILES.json", SHA256)
+
+    def test_another_files_name(self) -> None:
+        # Taken in case ansible-galaxy allows one.
+        files = {"name": "OTHER.json", "ftype": "file", "chksum_type": "sha256", "chksum_sha256": SHA256, "format": 1}
+
+        assert Manifest.parse(manifest(file_manifest_file=files)).files_name == "OTHER.json"
 
     def test_collection_info_checked_when_asked(self) -> None:
         m = Manifest.parse(manifest({})).collection_info
@@ -152,6 +158,9 @@ class TestManifest:
             ({"format": 2}, "format"),
             ({"file_manifest_file": None}, "file_manifest_file"),
             ({"file_manifest_file": {"name": "FILES.json"}}, "file_manifest_file.ftype"),
+            ({"file_manifest_file": {"name": "MANIFEST.json"}}, "file_manifest_file.name"),
+            ({"file_manifest_file": {"name": "../FILES.json"}}, "file_manifest_file.name"),
+            ({"file_manifest_file": {"name": "meta/FILES.json"}}, "file_manifest_file.name"),
         ],
     )
     def test_refused(self, top: dict[str, object], field: str) -> None:

@@ -176,11 +176,15 @@ impl Metadata {
 }
 
 /// `MANIFEST.json`, as ansible-galaxy builds it, with format 1, the only one there is: the collection's metadata as
-/// `collection_info`, and `FILES.json`'s sha256 in `file_manifest_file`.
+/// `collection_info`, and in `file_manifest_file` the file listing the collection's files and its sha256. That's
+/// always `FILES.json` today, but any name is taken, in case ansible-galaxy allows others.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Manifest {
     pub collection_info: Metadata,
-    /// `FILES.json`'s sha256, in lowercase hex.
+    /// The file listing the collection's files, `FILES.json` as ansible-galaxy builds it: a file name at the top of
+    /// the collection, other than `MANIFEST.json`.
+    pub files_name: String,
+    /// That file's sha256, in lowercase hex.
     pub files_sha256: String,
 }
 
@@ -208,10 +212,20 @@ impl Manifest {
         if obj.get("format") != Some(&format) {
             fail("format", "expected 1, the only format there is");
         }
-        let mut files_sha256 = None;
+        let (mut files_name, mut files_sha256) = (None, None);
         match obj.get("file_manifest_file") {
             Some(Json::Object(files)) => {
-                for (key, expected) in [("name", "FILES.json"), ("ftype", "file"), ("chksum_type", "sha256")] {
+                match files.get("name").and_then(Json::as_str) {
+                    // At the top of the collection, where ansible-galaxy writes it.
+                    Some(name) if !matches!(name, "" | "." | ".." | "MANIFEST.json") && !name.contains(['/', '\\']) => {
+                        files_name = Some(name.to_owned());
+                    }
+                    _ => fail(
+                        "file_manifest_file.name",
+                        "expected the name of a file at the top of the collection listing its files, such as 'FILES.json'",
+                    ),
+                }
+                for (key, expected) in [("ftype", "file"), ("chksum_type", "sha256")] {
                     if files.get(key).and_then(Json::as_str) != Some(expected) {
                         fail(&format!("file_manifest_file.{key}"), &format!("expected '{expected}'"));
                     }
@@ -228,12 +242,13 @@ impl Manifest {
             }
             _ => fail(
                 "file_manifest_file",
-                "expected an object naming FILES.json and giving its sha256",
+                "expected an object naming the file listing the collection's files and giving its sha256",
             ),
         }
-        match (collection_info, files_sha256, errors.is_empty()) {
-            (Some(collection_info), Some(files_sha256), true) => Ok(Manifest {
+        match (collection_info, files_name, files_sha256, errors.is_empty()) {
+            (Some(collection_info), Some(files_name), Some(files_sha256), true) => Ok(Manifest {
                 collection_info,
+                files_name,
                 files_sha256,
             }),
             _ => Err(ReadError::Invalid(MetadataError { errors })),
@@ -496,7 +511,7 @@ fn mapping_get<'a>(doc: &'a Document, key: &str) -> Option<&'a Value> {
 }
 
 /// A key as a message, or a name, shows it: a string as it is, anything else as YAML wrote it.
-fn shown(value: &Value) -> String {
+pub(crate) fn shown(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
         Value::Null => "null".to_owned(),
@@ -592,7 +607,13 @@ mod tests {
     fn manifest() {
         let data = manifest_json(r#"{"namespace": "ns", "name": "coll", "version": "1.0.0", "foo": 1}"#);
         let manifest = Manifest::parse(data.as_bytes()).unwrap();
-        assert_eq!(manifest.files_sha256, SHA256);
+        assert_eq!(
+            (manifest.files_name.as_str(), manifest.files_sha256.as_str()),
+            ("FILES.json", SHA256)
+        );
+        // Another name is taken, in case ansible-galaxy allows one.
+        let other = Manifest::parse(data.replace("FILES.json", "OTHER.json").as_bytes()).unwrap();
+        assert_eq!(other.files_name, "OTHER.json");
         let m = manifest.collection_info;
         assert_eq!(m.get_version().unwrap().text(), "1.0.0");
         assert_eq!(m.get("foo"), Some(&Value::Int(1)));
@@ -608,7 +629,7 @@ mod tests {
         };
         assert_eq!(fields(e), ["collection_info", "format", "file_manifest_file"]);
         let data = manifest_json("{}")
-            .replace("FILES.json", "OTHER.json")
+            .replace("FILES.json", "MANIFEST.json")
             .replace(r#""ftype": "file""#, r#""ftype": "dir""#)
             .replace(SHA256, &SHA256.to_uppercase())
             .replace(r#""format": 1}, "format": 1"#, r#""format": 2}, "format": 2"#);

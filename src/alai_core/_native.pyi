@@ -1528,3 +1528,99 @@ def extract_fragment_lookup(collections: _c.Iterable[ExtractedCollection], /) ->
     """A lookup over the doc fragments of ``collections``, extracted with docs, following their ``doc_fragments``
     routing as ansible-core does: routing is checked first, a redirect is followed into any of ``collections``, and a
     tombstone means the fragment was removed. Collections whose name is unknown are skipped."""
+
+class MarkupPart:
+    """A part of text with Ansible's documentation markup. Each kind uses only some of the fields, the others being
+    None, ``link`` empty and ``ignore`` False."""
+
+    @property
+    def kind(self) -> str:
+        """What it is:
+
+        - ``text``: text with no markup, in ``text``.
+        - ``bold``, ``italic`` and ``code``: ``B()``, ``I()`` and ``C()``, their text in ``text``.
+        - ``horizontal_line``: ``HORIZONTALLINE``, the spaces and tabs around it dropped.
+        - ``module``: ``M()``, the module in ``fqcn``.
+        - ``plugin``: ``P()``, the plugin in ``fqcn`` and ``plugin_type``, ``role`` for a role.
+        - ``url``: ``U()``, the URL in ``url``.
+        - ``link``: ``L()``, its text in ``text`` and URL in ``url``.
+        - ``rst_ref``: ``R()``, a heading on docs.ansible.com, its text in ``text`` and anchor in ``anchor``.
+        - ``env_var``: ``E()``, the variable in ``name``.
+        - ``option_value``: ``V()``, the value in ``value``.
+        - ``option_name`` and ``return_value``: ``O()`` and ``RV()``. Their ``name`` as written, ``link`` the path
+          to it, ``value`` after an ``=``, ``ignore`` for ``ignore:``, and ``fqcn``, ``plugin_type`` and
+          ``entrypoint`` for another plugin's, or a role's entry point's.
+        - ``error``: markup that isn't well formed, as written in ``text``, and why in ``message``.
+        """
+    @property
+    def text(self) -> str | None:
+        """The text shown, for ``text``, ``bold``, ``italic``, ``code``, ``link`` and ``rst_ref``, or an error's
+        markup as written."""
+    @property
+    def url(self) -> str | None:
+        """``U()``'s and ``L()``'s URL, as written, not checked."""
+    @property
+    def anchor(self) -> str | None:
+        """``R()``'s anchor on docs.ansible.com."""
+    @property
+    def fqcn(self) -> str | None:
+        """The plugin ``M()`` or ``P()`` names, or the one ``O()`` or ``RV()`` is about, if it isn't the one
+        documented."""
+    @property
+    def plugin_type(self) -> str | None:
+        """``P()``'s plugin type, or ``O()``'s or ``RV()``'s, with ``fqcn``."""
+    @property
+    def entrypoint(self) -> str | None:
+        """The role entry point ``O()`` or ``RV()`` is about: ``O(ns.coll.role#role:entrypoint:name)``, or
+        ``O(entrypoint:name)`` for another entry point of the role documented, parsed with ``role=True``."""
+    @property
+    def name(self) -> str | None:
+        """``E()``'s variable, or ``O()``'s or ``RV()``'s name as written, such as ``foo[0].bar``."""
+    @property
+    def link(self) -> tuple[str, ...]:
+        """``O()``'s or ``RV()``'s name as the path to the option or return value, each ``[...]`` taken out, so
+        ``foo[0].bar`` is ``("foo", "bar")``."""
+    @property
+    def value(self) -> str | None:
+        """``V()``'s value, or ``O()``'s or ``RV()``'s after ``=``."""
+    @property
+    def ignore(self) -> bool:
+        """Whether ``O()`` or ``RV()`` is ``ignore:``, naming one that no longer exists."""
+    @property
+    def message(self) -> str | None:
+        """Why an error isn't well formed."""
+
+def markup_parse(text: str, /, *, role: bool = False) -> tuple[MarkupPart, ...]:
+    """``text`` split at Ansible's documentation markup, as
+    https://docs.ansible.com/projects/ansible/latest/dev_guide/ansible_markup.html defines it.
+
+    Markup only starts where the character before it isn't a letter, digit or ``_``, so ``aC(x)`` is text.
+    ``B()``, ``I()``, ``C()``, ``M()``, ``U()``, ``L()`` and ``R()`` end at the first ``)``, so they can't hold
+    one; ``O()``, ``V()``, ``RV()``, ``E()`` and ``P()`` take ``\\`` escapes. ``L()`` and ``R()`` take two
+    parameters, split at the first comma, with the spaces around it dropped. Other whitespace is kept as written.
+
+    Args:
+        text: The text, such as a description.
+        role: Whether ``text`` is in a role's docs, the only place ``O(entrypoint:name)`` and
+            ``RV(entrypoint:name)`` may name another of its entry points. Elsewhere they're an error.
+
+    Returns:
+        Its parts, in order. Markup that isn't well formed, such as ``M()`` without a FQCN, is an ``error`` part
+        holding it as written, and one that isn't closed with ``)`` takes the rest of the text.
+
+    Example:
+        >>> [(p.kind, p.text or p.name) for p in markup_parse("Set O(state=present) to C(create) it.")]
+        [('text', 'Set '), ('option_name', 'state'), ('text', ' to '), ('code', 'create'), ('text', ' it.')]
+
+        A role's argument specs pass ``role=True``. ``entrypoint`` is then the entry point an option is in, with
+        ``None`` for the one being documented:
+
+        >>> text = "Needs O(state), or O(install:version) when run as the install entry point."
+        >>> [(p.entrypoint, p.name) for p in markup_parse(text, role=True) if p.kind == "option_name"]
+        [(None, 'state'), ('install', 'version')]
+
+        Anywhere else, such as a module's docs, that reference is an error:
+
+        >>> [p.kind for p in markup_parse("O(install:version)")]
+        ['error']
+    """

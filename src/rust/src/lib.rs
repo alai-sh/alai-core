@@ -5,6 +5,7 @@ mod artifact;
 mod collection;
 mod extract;
 mod index;
+mod markup;
 mod pep440;
 mod plugins;
 mod semver;
@@ -48,6 +49,8 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("ExtractedFragmentLookup", py.get_type::<extract::FragmentLookup>())?;
     m.add_function(wrap_pyfunction!(extract::extract_collection, m)?)?;
     m.add_function(wrap_pyfunction!(extract::extract_fragment_lookup, m)?)?;
+    m.add("MarkupPart", py.get_type::<markup::Part>())?;
+    m.add_function(wrap_pyfunction!(markup::markup_parse, m)?)?;
     m.add("IndexConfig", py.get_type::<index::Config>())?;
     m.add("IndexCollections", py.get_type::<index::Collections>())?;
     m.add("IndexCollectionEntry", py.get_type::<index::CollectionEntry>())?;

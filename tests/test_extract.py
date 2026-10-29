@@ -590,12 +590,35 @@ plugin_routing:
     old_filter: {tombstone: {removal_version: 2.0.0}}
   lookup:
     old_lookup: {deprecation: {removal_date: 2025-06-01}}
+  action:
+    old_mod: {redirect: ns.coll.new_mod}
+  terminal:
+    old_os: {redirect: ns.coll.new_os}
+  module_utils:
+    helper: {redirect: ns.coll.other}
 """
     entries = routing(run(MemSource({"meta/runtime.yaml": runtime})))
     assert entries == {
-        "module:old_mod": {"redirect": "ns.coll.new_mod"},
+        "action:old_mod": {"redirect": "ns.coll.new_mod"},
         "filter:old_filter": {"tombstone": {"removal_version": "2.0.0"}},
         "lookup:old_lookup": {"deprecation": {"removal_date": "2025-06-01"}},
+        "module:old_mod": {"redirect": "ns.coll.new_mod"},
+        "terminal:old_os": {"redirect": "ns.coll.new_os"},
+    }
+
+
+def test_terminal_plugins():
+    # Chosen by a host's ansible_network_os rather than named in a play, and documented by nothing ansible-doc reads.
+    src = MemSource(
+        {
+            "plugins/terminal/__init__.py": "",
+            "plugins/terminal/ios.py": "class TerminalModule: pass\n",
+            "plugins/terminal/eos.py": 'DOCUMENTATION = "short_description: EOS"\n',
+        }
+    )
+    assert {(p.type, p.name): p.short_description for p in run(src).plugins} == {
+        ("terminal", "eos"): "EOS",
+        ("terminal", "ios"): None,
     }
 
 

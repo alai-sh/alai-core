@@ -1436,8 +1436,9 @@ class ExtractedPlugin:
 
     @property
     def type(self) -> str:
-        """The ``ansible-doc -t`` name, such as ``module``, ``lookup`` or ``filter``, ``role``, ``playbook``, or an
-        Event-Driven Ansible type: ``event_source``, ``event_filter`` or ``rulebook``."""
+        """The ``ansible-doc -t`` name, such as ``module``, ``lookup`` or ``filter``, ``role``, ``playbook``,
+        ``terminal``, which ansible-doc doesn't document, or an Event-Driven Ansible type: ``event_source``,
+        ``event_filter`` or ``rulebook``."""
     @property
     def name(self) -> str:
         """Its short name. A subdirectory adds a prefix: ``plugins/modules/net/ping.py`` is ``net.ping``."""
@@ -1453,7 +1454,7 @@ class ExtractedRouting:
 
     @property
     def type(self) -> str:
-        """The plugin's type, as for ``ExtractedPlugin.type``."""
+        """The plugin's type, as for ``ExtractedPlugin.type``, or ``action``."""
     @property
     def name(self) -> str:
         """The plugin's short name."""
@@ -1516,8 +1517,9 @@ class ExtractedCollection:
         """Sorted by type and name."""
     @property
     def routing(self) -> tuple[ExtractedRouting, ...]:
-        """``plugin_routing`` entries for plugin types, from ``meta/runtime.yml``, and for event sources and filters
-        from ``extensions/eda/eda_runtime.yml``. Sorted by type and name."""
+        """``plugin_routing`` entries for plugin types and ``action``, from ``meta/runtime.yml``, and for event
+        sources and filters from ``extensions/eda/eda_runtime.yml``. Sorted by type and name. An ``action`` entry
+        redirects the action plugin a module of its name runs, which isn't a plugin of its own here."""
     @property
     def fragments(self) -> dict[str, ExtractedDocFragment]:
         """The doc fragments the collection defines, by name. Read with docs only."""

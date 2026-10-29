@@ -1278,3 +1278,253 @@ class CollectionEdaRuntime:
     def plugin_routing(self) -> dict[str, dict[str, CollectionRoutingEntry]]:
         """Each plugin type's routing, such as ``event_source``, by plugin name, as for
         ``CollectionRuntime.plugin_routing``."""
+
+class ExtractedIssue:
+    """Something in a collection that extraction couldn't read fully."""
+
+    @property
+    def kind(self) -> str:
+        """``python_unparseable``, a Python file that doesn't parse as Python 3, often Python 2;
+        ``filter_test_unresolved``, filter or test names that can't be found statically; ``fragment_unresolved``, a
+        doc fragment built at runtime; ``value_too_large``, a YAML value past the limits, dropped; or
+        ``docs_unreadable``, a section of a plugin's docs, or its sidecar, that can't be read, with the section in
+        ``detail``."""
+    @property
+    def path(self) -> str:
+        """The file within the collection."""
+    @property
+    def detail(self) -> str:
+        """More about it, such as which value was too large, or empty."""
+
+class ExtractedDocsError:
+    """A section of a plugin's docs that can't be read, or its whole docs file."""
+
+    @property
+    def section(self) -> str | None:
+        """``DOCUMENTATION``, ``EXAMPLES`` or ``RETURN``, or None for the whole file: a Python file that doesn't parse
+        as Python 3, or a sidecar that isn't YAML or isn't a mapping."""
+    @property
+    def message(self) -> str:
+        """Why, such as the YAML error."""
+    @property
+    def text(self) -> str | None:
+        """The section's, or the file's, text as written, if it's a string: shown as it is, it's often still
+        readable."""
+
+class ExtractedPluginDocs:
+    """A plugin's docs as the collection wrote them, with no fragments applied. ``extends_documentation_fragment`` is
+    taken out of ``DOCUMENTATION`` and ``RETURN`` and listed in ``fragments`` and ``return_fragments``.
+
+    Every value can be written as standard JSON: keys are strings, aliases are expanded, and a float that isn't finite
+    is its text. Scalars are as ``yaml_loads`` gives them.
+    """
+
+    def __init__(
+        self,
+        *,
+        documentation: _c.Mapping[str, object] | None = None,
+        examples: str | None = None,
+        returns: _c.Mapping[str, object] | None = None,
+        entry_points: _c.Mapping[str, object] | None = None,
+        fragments: _c.Sequence[str] = (),
+        return_fragments: _c.Sequence[str] = (),
+        path: str | None = None,
+        collection: str | None = None,
+        module: bool = False,
+    ) -> None:
+        """Docs from somewhere other than extraction, such as an index.
+
+        Raises:
+            TypeError: A mapping isn't one, or holds a value that isn't None, a bool, int, float, str, list, tuple
+                or mapping of these.
+        """
+    @property
+    def documentation(self) -> dict[str, object] | None:
+        """``DOCUMENTATION``."""
+    @property
+    def examples(self) -> str | None:
+        """``EXAMPLES``, the source text."""
+    @property
+    def returns(self) -> dict[str, object] | None:
+        """``RETURN``."""
+    @property
+    def entry_points(self) -> dict[str, object] | None:
+        """A role's ``meta/argument_specs.yml``, by entry point: ``main`` is ``tasks/main.yml``, any other a task
+        file run with ``tasks_from``."""
+    @property
+    def fragments(self) -> tuple[str, ...]:
+        """``DOCUMENTATION``'s ``extends_documentation_fragment``, still to apply."""
+    @property
+    def return_fragments(self) -> tuple[str, ...]:
+        """``RETURN``'s ``extends_documentation_fragment``, still to apply."""
+    @property
+    def errors(self) -> tuple[ExtractedDocsError, ...]:
+        """The sections that can't be read, each None above, or the whole file. ansible-doc shows no docs at all for
+        such a plugin; the rest are kept so they can be shown, with what's wrong. ``short_description`` is still
+        found in an unreadable ``DOCUMENTATION`` as ``ansible-doc -l`` finds it."""
+    @property
+    def collection(self) -> str | None:
+        """The plugin's collection, ``ns.coll``, to label its versions and dates with, or None if it isn't known.
+        Extraction gives it from the collection's name."""
+    @property
+    def module(self) -> bool:
+        """Whether the plugin is a module, whose deprecations are shaped differently when they're labelled."""
+    @property
+    def path(self) -> str | None:
+        """The file within the collection the docs were read from, or None for docs made elsewhere. It may not be
+        the plugin's own: a filter's can be the file providing it, documenting another of its filters, as ansible-doc
+        shows it, and ``documentation``'s ``name`` then says which."""
+    def apply_fragments(
+        self,
+        lookup: _c.Callable[[str], ExtractedDocFragment | None],
+        /,
+    ) -> ExtractedPluginDocs:
+        """These docs with every fragment ``lookup`` can supply applied, merged as ansible-core does.
+
+        The plugin's own values win, ``options`` and ``attributes`` merge per entry, ``notes`` and ``seealso`` are
+        extended, and other lists are combined. Where ansible-core would fail, such as values of different types,
+        the plugin's value is kept. With ``collection``, each ``version_added``, removal version and removal date is
+        labelled with the collection it belongs to, as ansible-doc does (``version_added_collection``,
+        ``removed_from_collection`` and ``collection_name``): the plugin's own with ``collection``, a fragment's with
+        its own collection. Without it, nothing is labelled.
+
+        Args:
+            lookup: Called with a fragment's full name, ``ns.coll.name``, a short one being ansible.builtin's, and
+                returning the fragment, or None if it isn't available. ``extract_fragment_lookup`` makes one from
+                extracted collections.
+
+        Returns:
+            New docs. The names ``lookup`` couldn't supply stay in ``fragments`` and ``return_fragments``, so they can
+            be applied again once more collections are available.
+
+        Raises:
+            TypeError: ``lookup`` gave something other than an ``ExtractedDocFragment`` or None.
+            Exception: Whatever ``lookup`` raises.
+        """
+
+class ExtractedPlugin:
+    """A module, plugin, filter, test, role, playbook, or Event-Driven Ansible content."""
+
+    @property
+    def type(self) -> str:
+        """The ``ansible-doc -t`` name, such as ``module``, ``lookup`` or ``filter``, ``role``, ``playbook``, or an
+        Event-Driven Ansible type: ``event_source``, ``event_filter`` or ``rulebook``."""
+    @property
+    def name(self) -> str:
+        """Its short name. A subdirectory adds a prefix: ``plugins/modules/net/ping.py`` is ``net.ping``."""
+    @property
+    def short_description(self) -> str | None:
+        """Its ``short_description``, whitespace collapsed to single spaces."""
+    @property
+    def docs(self) -> ExtractedPluginDocs | None:
+        """Its docs, if extracted with them and it has any."""
+
+class ExtractedRouting:
+    """A ``plugin_routing`` entry, which may name a plugin the collection no longer has."""
+
+    @property
+    def type(self) -> str:
+        """The plugin's type, as for ``ExtractedPlugin.type``."""
+    @property
+    def name(self) -> str:
+        """The plugin's short name."""
+    @property
+    def entry(self) -> dict[str, object]:
+        """The entry as written, every scalar a string as ansible-core reads it: ``redirect``, ``deprecation``,
+        ``tombstone`` and anything else."""
+
+class ExtractedDocFragment:
+    """A doc fragment, ``plugins/doc_fragments/<name>.py``, as the collection wrote it."""
+
+    def __init__(
+        self, *, collection: str | None, name: str, attributes: _c.Mapping[str, _c.Mapping[str, object]]
+    ) -> None:
+        """A fragment from somewhere other than extraction, such as an index, for a custom lookup.
+
+        Raises:
+            TypeError: An attribute isn't a mapping, or holds a value that isn't None, a bool, int, float, str,
+                list, tuple or mapping of these.
+        """
+    @property
+    def collection(self) -> str | None:
+        """The collection defining it, ``ns.coll``, or None if its name is unknown."""
+    @property
+    def name(self) -> str:
+        """Its name within the collection, such as ``auth``, or ``sub.auth`` in a subdirectory."""
+    @property
+    def attributes(self) -> dict[str, dict[str, object]]:
+        """``ModuleDocFragment``'s string attributes, parsed: ``DOCUMENTATION``, ``RETURN`` and any other uppercase
+        name, which ``ns.coll.auth.other`` refers to."""
+
+class ExtractedFragmentLookup:
+    """A lookup over extracted collections' doc fragments, for ``ExtractedPluginDocs.apply_fragments``."""
+
+    def __call__(self, name: str, /) -> ExtractedDocFragment | None:
+        """The fragment of the full name ``name``, or None if it isn't available, was removed, or redirects in a
+        loop."""
+
+class ExtractedCollection:
+    """What extraction found in a collection."""
+
+    @property
+    def namespace(self) -> str | None:
+        """From ``MANIFEST.json``, or ``galaxy.yml`` in a source checkout. None if it isn't a string."""
+    @property
+    def name(self) -> str | None:
+        """As for ``namespace``."""
+    @property
+    def version(self) -> str | None:
+        """As for ``namespace``."""
+    @property
+    def dependencies(self) -> dict[str, str]:
+        """Each dependency's requirement, by name, where both are strings."""
+    @property
+    def requires_ansible(self) -> str | None:
+        """From ``meta/runtime.yml``, if it's a string."""
+    @property
+    def plugins(self) -> tuple[ExtractedPlugin, ...]:
+        """Sorted by type and name."""
+    @property
+    def routing(self) -> tuple[ExtractedRouting, ...]:
+        """``plugin_routing`` entries for plugin types, from ``meta/runtime.yml``, and for event sources and filters
+        from ``extensions/eda/eda_runtime.yml``. Sorted by type and name."""
+    @property
+    def fragments(self) -> dict[str, ExtractedDocFragment]:
+        """The doc fragments the collection defines, by name. Read with docs only."""
+    @property
+    def fragment_routing(self) -> dict[str, dict[str, object]]:
+        """``plugin_routing.doc_fragments`` entries, by fragment name. Read with docs only."""
+    @property
+    def issues(self) -> tuple[ExtractedIssue, ...]:
+        """What couldn't be read fully."""
+
+def extract_collection(path: str | os.PathLike[str], /, *, docs: bool = False) -> ExtractedCollection:
+    """Extract the plugins of the collection in the directory ``path``, with the GIL released.
+
+    Nothing in the collection is imported or run. Names come from file paths, and for filters and tests from the
+    Python syntax tree; docs come from string constants (``DOCUMENTATION``, ``EXAMPLES`` and ``RETURN``) or a YAML
+    sidecar. A tarball must be extracted first, with ``artifact_extract``.
+
+    Args:
+        path: The collection's directory, such as ``ansible_collections/ns/coll``.
+        docs: Read each plugin's docs and the collection's doc fragments too.
+
+    Returns:
+        The collection.
+
+    Raises:
+        NotADirectoryError: ``path`` isn't a directory.
+        OSError: The directory can't be read.
+        ValueError: ``MANIFEST.json`` isn't a JSON object.
+        CollectionMetadataError: ``MANIFEST.json`` isn't as ansible-galaxy builds it, as
+            ``CollectionManifest.parse`` reads it, or ``galaxy.yml``'s top level isn't a mapping. Their values
+            aren't checked: one of the wrong type is None here.
+        YamlError: ``galaxy.yml`` isn't YAML Ansible could read.
+
+        Each message starts with the file's path.
+    """
+
+def extract_fragment_lookup(collections: _c.Iterable[ExtractedCollection], /) -> ExtractedFragmentLookup:
+    """A lookup over the doc fragments of ``collections``, extracted with docs, following their ``doc_fragments``
+    routing as ansible-core does: routing is checked first, a redirect is followed into any of ``collections``, and a
+    tombstone means the fragment was removed. Collections whose name is unknown are skipped."""

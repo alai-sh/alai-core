@@ -131,6 +131,103 @@ pub fn select(text: &str, keys: &[&str]) -> Result<Option<Document>, YamlError> 
         .map(|(document, mapping)| mapping.then_some(document))
 }
 
+/// The text of the scalar at `path`, keys of mappings nested from the root, read only as far as it, so a document
+/// that breaks further on still gives it. None if it isn't there before the text breaks, isn't a scalar, or is an
+/// alias, or if the text breaks right after it, as the scalar may then not be what was meant, such as `'a' b` or a
+/// key indented into its lines. Its text as written, its tag ignored, and the first of a key given twice, as
+/// reading stops there.
+pub fn scalar_at(text: &str, path: &[&str]) -> Option<String> {
+    // As Builder::run: libyaml-safer's scanner can panic at the end of input without a final newline.
+    let owned;
+    let text = if text.ends_with('\n') {
+        text
+    } else {
+        owned = format!("{text}\n");
+        owned.as_str()
+    };
+    std::panic::catch_unwind(|| scan_to(text, path)).ok().flatten()
+}
+
+fn scan_to(text: &str, path: &[&str]) -> Option<String> {
+    /// A collection open around the next event: whether it's a mapping, whether its next node is a key, whether the
+    /// key just read is the next of `path`, and whether this mapping was reached along `path`.
+    struct Open {
+        mapping: bool,
+        at_key: bool,
+        take: bool,
+        on_path: bool,
+    }
+    fn complete(parent: Option<&mut Open>) {
+        if let Some(parent) = parent.filter(|p| p.mapping) {
+            if parent.at_key {
+                parent.at_key = false;
+            } else {
+                parent.at_key = true;
+                parent.take = false;
+            }
+        }
+    }
+    let mut input = text.as_bytes();
+    let mut parser = Parser::new();
+    parser.set_input_string(&mut input);
+    let mut open: Vec<Open> = Vec::new();
+    loop {
+        let event = parser.parse().ok()?;
+        let depth = open.len();
+        let parent = open.last();
+        let is_key = parent.is_some_and(|p| p.mapping && p.at_key);
+        let target = parent.is_some_and(|p| p.mapping && !p.at_key && p.take);
+        match event.data {
+            EventData::StreamStart { .. } | EventData::DocumentStart { .. } | EventData::DocumentEnd { .. } => {}
+            EventData::StreamEnd => return None,
+            EventData::Scalar { value, .. } => {
+                if depth == 0 {
+                    return None;
+                }
+                if is_key {
+                    let parent = open.last_mut().expect("a key is in a mapping");
+                    parent.take = parent.on_path && path.get(depth - 1) == Some(&value.as_str());
+                } else if target && depth == path.len() {
+                    return parser.parse().is_ok().then_some(value);
+                }
+                complete(open.last_mut());
+            }
+            EventData::Alias { .. } => {
+                if depth == 0 || (target && depth == path.len()) {
+                    return None;
+                }
+                if is_key {
+                    open.last_mut().expect("a key is in a mapping").take = false;
+                }
+                complete(open.last_mut());
+            }
+            EventData::MappingStart { .. } | EventData::SequenceStart { .. } => {
+                let mapping = matches!(event.data, EventData::MappingStart { .. });
+                if target && depth == path.len() {
+                    return None;
+                }
+                let on_path = mapping && (depth == 0 || (target && depth < path.len()));
+                if depth == 0 && !mapping {
+                    return None;
+                }
+                open.push(Open {
+                    mapping,
+                    at_key: true,
+                    take: false,
+                    on_path,
+                });
+            }
+            EventData::MappingEnd | EventData::SequenceEnd => {
+                open.pop();
+                if open.is_empty() {
+                    return None;
+                }
+                complete(open.last_mut());
+            }
+        }
+    }
+}
+
 /// A collection being built. A skipped one, outside the keys `select` wants, builds nothing in it but anchored nodes,
 /// which a wanted key may alias.
 enum Frame {
@@ -735,6 +832,38 @@ mod tests {
             ])
         );
         assert_eq!(entries[3].1, Value::Mapping(vec![(s("<<"), Value::Int(1))]));
+    }
+
+    #[test]
+    fn scalar_at_reads_only_as_far_as_it() {
+        // An option of the same name, before it, isn't it.
+        let text = "options:\n  short_description: {type: str}\nshort_description: Root\nbroken: [unclosed\n";
+        assert_eq!(scalar_at(text, &["short_description"]).as_deref(), Some("Root"));
+        let text =
+            "DOCUMENTATION:\n  options: {short_description: x}\n  short_description: >\n    Folded\n    text\nbad: [\n";
+        assert_eq!(
+            scalar_at(text, &["DOCUMENTATION", "short_description"]).as_deref(),
+            Some("Folded text\n")
+        );
+        // Broken right after it, so maybe not what was meant: a quoted scalar with more after it, or a key indented
+        // into its lines.
+        assert_eq!(scalar_at("short_description: 'a' b\n", &["short_description"]), None);
+        assert_eq!(
+            scalar_at("short_description: a\n author: b\n", &["short_description"]),
+            None
+        );
+        // Broken before it, not a scalar, an alias, or not there.
+        assert_eq!(
+            scalar_at("bad: [\nshort_description: x\n", &["short_description"]),
+            None
+        );
+        assert_eq!(scalar_at("short_description: [a]\n", &["short_description"]), None);
+        assert_eq!(
+            scalar_at("a: &a x\nshort_description: *a\n", &["short_description"]),
+            None
+        );
+        assert_eq!(scalar_at("- short_description: x\n", &["short_description"]), None);
+        assert_eq!(scalar_at("other: x", &["short_description"]), None);
     }
 
     #[test]

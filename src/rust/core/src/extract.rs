@@ -26,9 +26,10 @@ pub use fragments::{DocFragment, FragmentIndex, apply_section, full_name};
 use crate::collection::{EdaRuntime, Manifest, Metadata, ReadError, Runtime};
 use crate::yaml::{Document, Value};
 
-/// `plugins/<dir>` to plugin type, for the directories playbooks name plugins from. Others, such as `module_utils`,
-/// `doc_fragments`, `plugin_utils` and `terminal`, aren't named in playbooks.
-const PLUGIN_DIRS: [(&str, &str); 12] = [
+/// `plugins/<dir>` to plugin type, for the plugins found by name: in playbooks, or for `terminal` by a host's
+/// `ansible_network_os`. Others, such as `module_utils`, `doc_fragments` and `plugin_utils`, aren't plugins a play
+/// runs.
+const PLUGIN_DIRS: [(&str, &str); 13] = [
     ("become", "become"),
     ("cache", "cache"),
     ("callback", "callback"),
@@ -40,6 +41,7 @@ const PLUGIN_DIRS: [(&str, &str); 12] = [
     ("netconf", "netconf"),
     ("shell", "shell"),
     ("strategy", "strategy"),
+    ("terminal", "terminal"),
     ("vars", "vars"),
 ];
 
@@ -111,8 +113,9 @@ pub struct Collection {
     pub requires_ansible: Option<String>,
     /// Sorted by type and name.
     pub plugins: Vec<Plugin>,
-    /// `plugin_routing` entries for plugin types, from `meta/runtime.yml`, and for event sources and filters from
-    /// `extensions/eda/eda_runtime.yml`. Sorted by type and name.
+    /// `plugin_routing` entries for plugin types and `action`, from `meta/runtime.yml`, and for event sources and
+    /// filters from `extensions/eda/eda_runtime.yml`. Sorted by type and name. An `action` entry redirects the action
+    /// plugin a module of its name runs, which isn't a plugin of its own here.
     pub routing: Vec<Routing>,
     /// The doc fragments the collection defines, sorted by name. Read with docs only.
     pub fragments: Vec<DocFragment>,
@@ -124,8 +127,8 @@ pub struct Collection {
 /// A module, plugin, filter, test, role, playbook, or Event-Driven Ansible content.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plugin {
-    /// The `ansible-doc -t` name, such as `module`, `lookup` or `filter`, `role`, `playbook`, or an Event-Driven
-    /// Ansible type: `event_source`, `event_filter` or `rulebook`.
+    /// The `ansible-doc -t` name, such as `module`, `lookup` or `filter`, `role`, `playbook`, `terminal`, which
+    /// ansible-doc doesn't document, or an Event-Driven Ansible type: `event_source`, `event_filter` or `rulebook`.
     pub kind: String,
     /// Its short name. A subdirectory adds a prefix: `plugins/modules/net/ping.py` is `net.ping`.
     pub name: String,
@@ -1262,6 +1265,8 @@ fn collect(source: &Source, names: Names, docs: bool) -> Collection {
                 "modules" => "module",
                 "filter" => "filter",
                 "test" => "test",
+                // An action plugin isn't a plugin of its own here, but its routing redirects the module of its name.
+                "action" => "action",
                 "doc_fragments" if docs => "doc_fragments",
                 other => match PLUGIN_DIRS.iter().find(|(dir, _)| *dir == other) {
                     Some((_, kind)) => kind,

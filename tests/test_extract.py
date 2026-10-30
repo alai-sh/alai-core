@@ -1050,6 +1050,35 @@ def test_unreadable_sections_are_errors() -> None:
     assert found["plugins/lookup/sidecar.yml"].startswith("did not find expected")
 
 
+def test_without_docs_only_the_description_is_read() -> None:
+    # Reading stops at short_description, so what breaks after it, or RETURN, isn't an issue: that's docs' concern.
+    # Without one, or with one that isn't text, the whole docs are read as with docs, so the result is the same.
+    src = MemSource(
+        {
+            "plugins/modules/after.py": 'DOCUMENTATION = "short_description: After\\noptions: [unclosed"\n',
+            "plugins/modules/bad_return.py": 'DOCUMENTATION = "short_description: Kept"\nRETURN = "a: [unclosed"\n',
+            "plugins/modules/number.py": 'DOCUMENTATION = "short_description: 123"\n',
+            "plugins/modules/empty.py": 'DOCUMENTATION = ""\n',
+            "plugins/modules/empty.yml": "DOCUMENTATION:\n  short_description: Sidecar\n",
+            "plugins/lookup/side.py": "x = 1\n",
+            "plugins/lookup/side.yml": "DOCUMENTATION:\n  short_description: Sidecar\nRETURN: [unclosed\n",
+        }
+    )
+    expected = {"after": "After", "bad_return": "Kept", "empty": "Sidecar", "number": None}
+    result = run(src)
+    assert descriptions(result) == expected
+    assert descriptions(result, "lookup") == {"side": "Sidecar"}
+    assert issues(result, "docs_unreadable") == []
+    result = run(src, docs=True)
+    assert descriptions(result) == expected
+    assert descriptions(result, "lookup") == {"side": "Sidecar"}
+    assert sorted(issues(result, "docs_unreadable")) == [
+        "plugins/lookup/side.yml",
+        "plugins/modules/after.py",
+        "plugins/modules/bad_return.py",
+    ]
+
+
 def test_docs_found_as_ansible_doc_finds_them() -> None:
     # Each checked against ansible-doc from ansible-core 2.21.5: the short description, and the file it read.
     src = MemSource(

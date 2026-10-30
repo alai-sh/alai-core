@@ -1317,7 +1317,7 @@ class ExtractedIssue:
         ``filter_test_unresolved``, filter or test names that can't be found statically; ``fragment_unresolved``, a
         doc fragment built at runtime; ``value_too_large``, a YAML value past the limits, dropped; or
         ``docs_unreadable``, a section of a plugin's docs, or its sidecar, that can't be read, with the section in
-        ``detail``."""
+        ``detail``, as far as the docs are read."""
     @property
     def path(self) -> str:
         """The file within the collection."""
@@ -1539,7 +1539,8 @@ def extract_collection(path: str | os.PathLike[str], /, *, docs: bool = False) -
 
     Args:
         path: The collection's directory, such as ``ansible_collections/ns/coll``.
-        docs: Read each plugin's docs and the collection's doc fragments too.
+        docs: Read each plugin's docs and the collection's doc fragments too. If ``False``, only the
+            ``short_description`` is read and not the whole doc.
 
     Returns:
         The collection.
@@ -1582,7 +1583,8 @@ def extract_ansible_core(path: str | os.PathLike[str], /, *, docs: bool = False)
 
     Args:
         path: A checkout, or an sdist extracted with ``artifact_extract_sdist`` and ``include=["lib/ansible/"]``.
-        docs: Read each plugin's docs and the doc fragments too.
+        docs: Read each plugin's docs and the collection's doc fragments too. If ``False``, only the
+            ``short_description`` is read and not the whole doc.
 
     Returns:
         ``ansible.builtin``, at the version ``path`` is, with no dependencies and no ``requires_ansible``.
@@ -1605,7 +1607,8 @@ def extract_ansible_rulebook(path: str | os.PathLike[str], /, *, docs: bool = Fa
     Args:
         path: A checkout, or an sdist extracted with ``artifact_extract_sdist`` and
             ``include=["PKG-INFO", "ansible_rulebook/"]``.
-        docs: Read each plugin's docs too.
+        docs: Read each plugin's docs and the collection's doc fragments too. If ``False``, only the
+            ``short_description`` is read and not the whole doc.
 
     Returns:
         ``eda.builtin``, with no dependencies and no ``requires_ansible``. Its version is None without

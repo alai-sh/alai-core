@@ -714,6 +714,8 @@ const DOC_EXTENSIONS: [&str; 3] = [".py", ".yml", ".yaml"];
 /// Reads the collection's files for docs, as ansible-core's `get_plugin_docs` finds and reads them.
 struct Reader<'s> {
     source: &'s Source,
+    /// Whether whole docs are read, or just the `short_description`.
+    full: bool,
     issues: Issues,
     /// Each Python file parsed, or None if it isn't Python 3, an issue once.
     trees: HashMap<String, Option<Rc<ModModule>>>,
@@ -740,7 +742,7 @@ impl<'s> Reader<'s> {
         if path.ends_with(".py") {
             self.python_docs(path)
         } else {
-            sidecar_docs(self.source, path)
+            sidecar_docs(self.source, path, self.full)
         }
     }
 
@@ -762,6 +764,18 @@ impl<'s> Reader<'s> {
             return docs;
         };
         for (key, value) in python::doc_assignments(&tree) {
+            if !self.full && key == "RETURN" {
+                continue;
+            }
+            if !self.full
+                && key == "DOCUMENTATION"
+                && let Some(python::DocValue::Text(text)) = &value
+                && let Some(document) = description_only(crate::yaml::scalar_at(text, &["short_description"]))
+            {
+                docs.errors.retain(|e| e.section != Some(key));
+                docs.doc = docs.keep(document, None);
+                continue;
+            }
             let document = match value {
                 None => {
                     let why = "isn't a string or a dict of literals, which ansible-core can't read".to_owned();
@@ -857,13 +871,19 @@ impl<'s> Reader<'s> {
 
 /// Docs of a YAML sidecar, such as `plugins/modules/<name>.yml`: its `DOCUMENTATION`, `EXAMPLES` and `RETURN`. One
 /// that isn't YAML, or holds something other than a mapping, which ansible-core fails on, is an error of the whole
-/// file. An empty one has none.
-fn sidecar_docs(source: &Source, path: &str) -> Docs {
+/// file. An empty one has none. Without `full`, only as far as `DOCUMENTATION`'s `short_description` when it has one.
+fn sidecar_docs(source: &Source, path: &str, full: bool) -> Docs {
     let mut docs = Docs::new(path);
     let Some(data) = source.read(path) else {
         return docs;
     };
     let text = String::from_utf8_lossy(&data).into_owned();
+    if !full
+        && let Some(document) = description_only(crate::yaml::scalar_at(&text, &["DOCUMENTATION", "short_description"]))
+    {
+        docs.doc = docs.keep(document, None);
+        return docs;
+    }
     let document = match yaml_document(&text) {
         Ok(document) => document,
         Err(why) => {
@@ -899,6 +919,18 @@ fn sidecar_docs(source: &Source, path: &str) -> Docs {
 /// YAML from a collection, or why it isn't YAML Ansible could read.
 fn yaml_document(text: &str) -> Result<Document, String> {
     crate::yaml::loads(text).map_err(|e| e.to_string())
+}
+
+/// Docs holding only `short_description`, from `scalar_at`'s text of it, or None to read the whole document: it
+/// isn't there, so whether the docs are set at all decides what's read next, or it's plain text that isn't a string,
+/// such as `123`, which the whole document reads as a number and no description.
+fn description_only(found: Option<String>) -> Option<Document> {
+    let text = crate::yaml::resolve(found?);
+    matches!(text, Value::String(_)).then(|| Document {
+        root: Value::Mapping(vec![(Value::String("short_description".to_owned()), text)]),
+        anchors: Vec::new(),
+        warnings: Vec::new(),
+    })
 }
 
 /// A role's argument spec, as ansible-core reads it (`RoleMixin` in `cli/doc.py`, and `_get_role_argspecs` in
@@ -1023,7 +1055,8 @@ impl std::fmt::Display for ExtractError {
 impl std::error::Error for ExtractError {}
 
 /// Extract the collection in the directory `root`. With `docs`, each plugin's docs and the collection's doc fragments
-/// are read as well.
+/// are read as well. Without, a plugin's docs are read only as far as its `short_description`, so what can't be read
+/// past it isn't an issue.
 pub fn extract(root: &Path, docs: bool) -> Result<Collection, ExtractError> {
     let source = Source::new(root, &[])?;
     let names = metadata(&source)?;
@@ -1078,6 +1111,7 @@ fn collect(source: &Source, names: Names, docs: bool) -> Collection {
     let (namespace, collection, version, dependencies) = names;
     let mut reader = Reader {
         source,
+        full: docs,
         issues: Issues::default(),
         trees: HashMap::new(),
     };

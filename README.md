@@ -25,14 +25,15 @@ $ uv run tox run -f sanity
 $ uv run tox run -f py314
 ```
 
-A project depends on it from GitHub, pinned to a commit, in its
-`[tool.uv.sources]`:
+A project depends on it from PyPI, as the API is not considered stable, you
+should pin the exact version:
 
 ```toml
-alai-core = { git = "https://github.com/alai-sh/alai-core", rev = "<commit>" }
+dependencies = ["alai-core == 0.0.1"]
 ```
 
-To work on both at once, point it at a local checkout instead:
+When targeting a local copy with changes to `alai-core`, point the other
+project's `[tool.uv.sources]` to the local checkout:
 
 ```toml
 alai-core = { path = "../alai-core", editable = true }

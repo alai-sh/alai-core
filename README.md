@@ -1,5 +1,8 @@
 # alai-core
 
+[![PyPI](https://img.shields.io/pypi/v/alai-core)](https://pypi.org/project/alai-core/)
+[![CI](https://github.com/alai-sh/alai-core/actions/workflows/ci.yml/badge.svg)](https://github.com/alai-sh/alai-core/actions/workflows/ci.yml)
+
 > **Warning:** alai-core is for the alai tools' own use. It isn't
 > designed for public consumption. Its API isn't stable and can change in
 > any release, without notice.

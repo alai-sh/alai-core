@@ -6,6 +6,8 @@ on:
       - main
     tags:
       # Drafts the release; publishing the draft publishes to PyPI (publish.yml).
+      # Tag the release with:
+      #   TAG=v0.0.1 && git tag -a "$TAG" -m "$TAG" && git push origin "$TAG"
       - 'v*'
 
   pull_request:

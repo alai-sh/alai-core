@@ -5,9 +5,9 @@ on:
     branches:
       - main
     tags:
-      # Drafts the release; publishing the draft publishes to PyPI (publish.yml).
-      # Tag the release with:
-      #   TAG=v0.0.1 && git tag -a "$TAG" -m "$TAG" && git push origin "$TAG"
+      # Drafts the release, and publishing the draft publishes to PyPI (publish.yml).
+      # Tag the release with the version in Cargo.toml, as the build checks they match.
+      #   TAG="v$(grep -m1 '^version' Cargo.toml | cut -d '"' -f 2)" && git tag -a "$TAG" -m "$TAG" && git push origin "$TAG"
       - 'v*'
 
   pull_request:

@@ -57,6 +57,23 @@ jobs:
           uv sync --no-install-project
           uv run --no-sync tox run -f sanity
 
+  licenses:
+    name: Third-party licenses
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read  # Repo checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check THIRD-PARTY-LICENSES is up to date
+        run: |
+          rustup toolchain install
+          cargo install --locked cargo-about@0.9.3 --features cli
+          cargo about generate --locked about.hbs -o THIRD-PARTY-LICENSES
+          git diff --exit-code THIRD-PARTY-LICENSES
+
   rust-version:
     name: Rust version
     runs-on: ubuntu-26.04
@@ -399,6 +416,7 @@ jobs:
   draft:
     name: Draft release
     needs:
+      - licenses
       - rust-version
       - rust-test
       - sdist

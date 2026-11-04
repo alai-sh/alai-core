@@ -252,7 +252,7 @@ class TestAppended:
             tar_file("FILES.json", new),
         ]
 
-        refused(sandbox, members, r"a path outside the collection: \.\./victim\.txt")
+        refused(sandbox, members, r"\.\./victim\.txt in the artifact is outside the collection")
 
     def test_listing_replaced_without_the_manifest(self, sandbox: Path) -> None:
         # The manifest names the first FILES.json by its checksum, so a later one isn't what was built.
@@ -456,7 +456,7 @@ class TestListing:
         entry = listed(name, b"x") if ftype == "file" else listed_dir(name)
         members = collection(files=[entry])
 
-        refused(sandbox, members, "a path outside the collection")
+        refused(sandbox, members, "in the artifact is outside the collection")
 
     def test_name_not_utf8_refused(self, sandbox: Path) -> None:
         # A lone surrogate is what tarfile decodes a byte that isn't UTF-8 to, and JSON can spell one, but it isn't a
@@ -905,7 +905,7 @@ class TestUnpackedSize:
         members = collection(tar_file("big", self.BIG), files=[listed("big", self.BIG)])
 
         with pytest.raises(
-            ExtractError, match=r"^can't extract the artifact: it unpacks to more than 32768 bytes$"
+            ExtractError, match=r"^the artifact unpacks to more than 32768 bytes, which is too large to extract$"
         ) as e:
             _ = extract(sandbox, members, limit=32 * 1024)
 
@@ -1045,7 +1045,7 @@ def test_name_windows_cant_hold(sandbox: Path, name: str) -> None:
     members = collection(tar_file(name, b"x"), files=[listed(name, b"x")])
 
     if WINDOWS:
-        refused(sandbox, members, "a path outside the collection")
+        refused(sandbox, members, "in the artifact is outside the collection")
     else:
         assert extract(sandbox, members)[name] == "file 644 b'x'"
 
@@ -1187,14 +1187,14 @@ class TestSdist:
     def test_one_top_level_directory(self, sandbox: Path) -> None:
         members = [tar_file("a-1/PKG-INFO", b""), tar_file("b-1/lib/ansible/x.py", b"")]
 
-        self.refused(sandbox, members, "more than one top-level directory: a-1 and b-1")
+        self.refused(sandbox, members, "more than one top-level directory, a-1 and b-1")
 
     def test_nothing_beside_the_top_level_directory(self, sandbox: Path) -> None:
         self.refused(sandbox, [tar_file("PKG-INFO", b"")], "has PKG-INFO beside its top-level directory")
 
     @pytest.mark.parametrize("name", ["a-1/lib/ansible/../../../victim.txt", "a-1/lib/ansible//x.py"])
     def test_path_plainly_inside(self, sandbox: Path, name: str) -> None:
-        self.refused(sandbox, [tar_file(name, SECRET)], "a path that can't be extracted safely")
+        self.refused(sandbox, [tar_file(name, SECRET)], "in the sdist can't be extracted safely")
 
     def test_a_file_once(self, sandbox: Path) -> None:
         members = [tar_file("a-1/lib/ansible/x.py", b"1"), tar_file("a-1/lib/ansible/x.py", b"2")]

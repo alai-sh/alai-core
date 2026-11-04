@@ -151,13 +151,18 @@ impl Config {
         let index = &self.index;
         if !(index.contains("{namespace}") && index.contains("{name}")) && !index.contains("{sha256-checksum}") {
             return Err(format!(
-                "'formats.{n}.index' must be a URL template naming each file, with {{namespace}} and {{name}}, or \
-                 {{sha256-checksum}}"
+                "'formats.{n}.index' must be a URL template that names each file with {{namespace}} and {{name}} or \
+                 with {{sha256-checksum}}"
+            ));
+        }
+        if index.contains("{sha256-prefix}") && !index.contains("{sha256-checksum}") {
+            return Err(format!(
+                "'formats.{n}.index' can only use {{sha256-prefix}} alongside {{sha256-checksum}}"
             ));
         }
         if self.collections.is_none() && self.is_hashed() {
             return Err(format!(
-                "'formats.{n}.index' finds files by SHA-256, which only a 'collections' listing gives"
+                "'formats.{n}.index' finds files by their SHA-256 checksum, so the format needs a 'collections' listing"
             ));
         }
         if !DL_PLACEHOLDERS.iter().any(|p| self.dl.contains(p)) {
@@ -196,7 +201,7 @@ impl Config {
 
     /// Whether index files are found by their SHA-256, which only `collections.json` gives.
     pub fn is_hashed(&self) -> bool {
-        self.index.contains("{sha256-checksum}") || self.index.contains("{sha256-prefix}")
+        self.index.contains("{sha256-checksum}")
     }
 
     /// Where collection `name`'s index file is, relative to the index root.
@@ -707,7 +712,7 @@ fn read_line(obj: &Map<String, Value>, name: &str, cache: &mut Cache) -> Result<
         return Err(format!("'v' must be {LINE_VERSION}"));
     }
     if obj.get("name").and_then(Value::as_str) != Some(name) {
-        return Err(format!("'name' must be '{name}', the file's collection"));
+        return Err(format!("'name' must be '{name}' to match the file's collection"));
     }
     // The version first, so its message wins over any later field's.
     let vers = text(obj, "vers")?;

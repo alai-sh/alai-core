@@ -131,15 +131,21 @@ class TestConfig:
             ),
             (
                 config(formats={"1": {"index": "index/{sha256-prefix}/{sha256-checksum}.jsonl"}}),
-                r"'formats\.1\.index' finds files by SHA-256, which only a 'collections' listing gives",
+                r"'formats\.1\.index' finds files by their SHA-256 checksum, so the format needs a 'collections' listing",
             ),
             (
                 config(formats={"1": {"index": "index/{name}.jsonl", "collections": "c.json"}}),
-                r"'formats\.1\.index' must be a URL template naming each file",
+                r"'formats\.1\.index' must be a URL template that names each file",
             ),
             (
                 config(formats={"1": {"index": "index/{sha256-prefix}.jsonl", "collections": "c.json"}}),
-                r"'formats\.1\.index' must be a URL template naming each file",
+                r"'formats\.1\.index' must be a URL template that names each file",
+            ),
+            (
+                config(
+                    formats={"1": {"index": "index/{sha256-prefix}/{namespace}/{name}.jsonl", "collections": "c.json"}}
+                ),
+                r"'formats\.1\.index' can only use \{sha256-prefix\} alongside \{sha256-checksum\}",
             ),
             (config(dl="https://dl.example/artifact.tar.gz"), "'dl' must be a URL template with a placeholder"),
             (config(dl=None), "'dl' must be a URL template"),
@@ -204,7 +210,7 @@ class TestConfig:
         assert Config.parse(written.encode()).index == "index/{sha256-prefix}/{sha256-checksum}.jsonl"
 
     def test_writer_checks(self) -> None:
-        with pytest.raises(ValueError, match="finds files by SHA-256"):
+        with pytest.raises(ValueError, match="finds files by their SHA-256 checksum"):
             _ = Config(index="i/{sha256-checksum}", dl="{sha256-checksum}")
 
 
@@ -350,7 +356,7 @@ class TestCollectionIndex:
             (line(v=True), "'v' must be 1"),
             # Python's reader took 1.0 as 1. Only galaxy-sync writes lines, and it writes 1.
             (line(v=1.0), "'v' must be 1"),
-            (line(name="ns.other"), "'name' must be 'ns.coll', the file's collection"),
+            (line(name="ns.other"), "'name' must be 'ns.coll' to match the file's collection"),
             (line(vers="1.0"), "invalid version '1.0'"),
             (line(vers=None), "'vers' is required and must be a string"),
             (line(sha256="ABC"), "'sha256' must be a lowercase hex sha256"),

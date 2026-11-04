@@ -110,7 +110,7 @@ fn run(
     // A missing path is the filesystem's error, FileNotFoundError, from reading it.
     if path.exists() && !path.is_dir() {
         return Err(PyNotADirectoryError::new_err(format!(
-            "{} isn't a directory: extract a tarball first",
+            "{} isn't a directory, so extract the tarball first",
             path.display()
         )));
     }

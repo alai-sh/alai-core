@@ -783,7 +783,7 @@ def test_extract_errors(tmp_path: pathlib.Path) -> None:
         _ = ext.extract(tmp_path / "missing")
     tarball = tmp_path / "ns-coll-1.0.0.tar.gz"
     _ = tarball.write_bytes(b"")
-    with pytest.raises(NotADirectoryError, match="extract a tarball first"):
+    with pytest.raises(NotADirectoryError, match="extract the tarball first"):
         _ = ext.extract(tarball)
 
 

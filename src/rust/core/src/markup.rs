@@ -348,7 +348,9 @@ fn option(kind: Kind, param: &str, role: bool) -> Result<Part, String> {
         }
     } else if let Some((entrypoint, rest)) = name.split_once(':') {
         if !role {
-            return Err(format!("{entrypoint:?} is a role's entry point, outside a role's docs"));
+            return Err(format!(
+                "only a role's docs can name an entry point such as {entrypoint:?}"
+            ));
         }
         part.entrypoint = Some(entrypoint.to_owned());
         name = rest;

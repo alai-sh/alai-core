@@ -77,18 +77,21 @@ impl fmt::Display for ExtractError {
                 f,
                 "{entry} in the artifact isn't a directory, as the collection's files manifest says"
             ),
-            "path" => write!(f, "the artifact has a path outside the collection: {entry}"),
+            "path" => write!(f, "{entry} in the artifact is outside the collection"),
             "link" => write!(f, "{entry} in the artifact links outside the collection, to {detail}"),
             "escape" => write!(
                 f,
-                "{entry} in the artifact leads outside the collection, through a symlink"
+                "{entry} in the artifact leads outside the collection through a symlink"
             ),
             "unreadable" => write!(f, "{entry} in the artifact can't be read"),
             "checksum" => write!(
                 f,
                 "{entry} in the artifact doesn't match its checksum in the collection's files manifest"
             ),
-            "too_large" => write!(f, "can't extract the artifact: it unpacks to more than {detail} bytes"),
+            "too_large" => write!(
+                f,
+                "the artifact unpacks to more than {detail} bytes, which is too large to extract"
+            ),
             "json" => write!(f, "{entry} in the artifact isn't valid JSON: {detail}"),
             "not_object" => write!(f, "{entry} in the artifact isn't a JSON object"),
             "manifest" => write!(f, "the artifact's MANIFEST.json is for {detail}"),
@@ -364,7 +367,7 @@ pub fn extract_sdist(tarball: &Path, dest: &Path, limit: u64, include: &[String]
         match &top {
             Some(top) if top != first => {
                 return Err(corrupt(format!(
-                    "the sdist has more than one top-level directory: {top} and {first}"
+                    "the sdist has more than one top-level directory, {top} and {first}"
                 )));
             }
             Some(_) => {}
@@ -377,9 +380,7 @@ pub fn extract_sdist(tarball: &Path, dest: &Path, limit: u64, include: &[String]
             continue;
         }
         if check_path(&name).is_err() {
-            return Err(corrupt(format!(
-                "the sdist has a path that can't be extracted safely: {name}"
-            )));
+            return Err(corrupt(format!("{name} in the sdist can't be extracted safely")));
         }
         if !written.insert(rest.to_owned()) {
             return Err(corrupt(format!("the sdist has {name} more than once")));

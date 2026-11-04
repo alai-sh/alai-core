@@ -1,0 +1,31 @@
+# Writes THIRD-PARTY-LICENSES, which every wheel ships, for the crates the extension links.
+#   cargo about generate --locked about.hbs -o THIRD-PARTY-LICENSES
+accepted = [
+    "Apache-2.0",
+    "BSL-1.0",
+    "MIT",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Unlicense",
+    "Zlib",
+]
+targets = [
+    "aarch64-apple-darwin",
+    "aarch64-pc-windows-msvc",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+private = { ignore = true }
+
+# Its Cargo.toml has no license field, only a license-file.
+[libyaml-safer.clarify]
+license = "MIT"
+[[libyaml-safer.clarify.files]]
+path = "LICENSE-MIT"
+license = "MIT"
+checksum = "36516aefdc84c5d5a1e7485425913a22dbda69eb1930c5e84d6ae4972b5194b9"

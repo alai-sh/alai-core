@@ -26,7 +26,7 @@ pub fn check_collection_name(text: &str) -> Result<(), ParseError> {
             && !KEYWORDS.contains(&part);
         if !valid {
             let hint = if part.to_lowercase() != part {
-                ", collection names are lowercase"
+                ", and collection names are lowercase"
             } else {
                 ""
             };

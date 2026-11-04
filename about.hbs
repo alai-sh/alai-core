@@ -1,0 +1,15 @@
+Third-party licenses
+
+The alai-core wheels include these Rust crates, which are under the licenses below.
+{{#each licenses}}
+
+================================================================================
+{{name}}
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

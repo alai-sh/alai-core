@@ -32,7 +32,7 @@ As the API isn't stable, a project that depends on alai-core from PyPI should
 pin the exact version.
 
 ```toml
-dependencies = ["alai-core == 0.0.1"]
+dependencies = ["alai-core == 0.1.0"]
 ```
 
 ## License

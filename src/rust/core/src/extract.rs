@@ -219,8 +219,8 @@ pub struct Routing {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Issue {
     /// `python_unparseable` (often Python 2), `filter_test_unresolved` (filter or test names that can't be found
-    /// statically), `fragment_unresolved` (a doc fragment built at runtime), or `value_too_large` (a YAML value
-    /// past the limits, dropped).
+    /// statically), `fragment_unresolved` (a doc fragment built at runtime), `value_too_large` (a YAML value past
+    /// the limits, dropped) or `docs_unreadable` (a section of a plugin's docs, or its sidecar, that can't be read).
     pub kind: &'static str,
     /// The file within the collection.
     pub path: String,

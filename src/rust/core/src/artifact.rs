@@ -12,7 +12,7 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs::File;
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -180,7 +180,7 @@ struct Failure {
 
 impl Failure {
     /// The filesystem's own error, the tarball unpacking to more than the limit, or a corrupt or truncated tarball or
-    /// gzip stream.
+    /// compressed stream.
     fn of(&self, err: io::Error) -> Error {
         if self.budget.over.get() {
             self.budget.exceeded()
@@ -209,21 +209,68 @@ impl<R: Read> Read for Capped<R> {
     }
 }
 
-type Tarball = Archive<Capped<MultiGzDecoder<BufReader<File>>>>;
+type Tarball = Archive<BufReader<Capped<Box<dyn Read>>>>;
 
 /// The tarball at `tarball`, failing once it unpacks to more than `budget` has left, and how to report an error
-/// reading it. The decoder reads the buffered file directly (`bufread`), rather than through a buffer of its own.
+/// reading it. The decoder reads the buffered file directly (`bufread`), and what it gives is buffered too, as the
+/// tar reader takes each header in a 512-byte read, which costs the decoder a run each. A file that isn't a tarball,
+/// compressed with gzip or zstd or not at all, is `corrupt`, naming its compression where it's one tar is often
+/// compressed with, so a client that's too old for an index's artifacts says so rather than that they're broken.
 fn open_archive(tarball: &Path, budget: &Rc<Budget>) -> Result<(Tarball, Failure), Error> {
     let file = File::open(tarball).at(tarball)?;
+    let mut file = BufReader::with_capacity(BUFFER, file);
+    let inner: Box<dyn Read> = match compression(file.fill_buf().at(tarball)?) {
+        Compression::Gzip => Box::new(MultiGzDecoder::new(file)),
+        // libzstd reads every frame of the file, skippable ones included, and checks each content checksum.
+        Compression::Zstd => Box::new(zstd::stream::read::Decoder::with_buffer(file).at(tarball)?),
+        Compression::None => Box::new(file),
+        Compression::Other(format) => {
+            let detail = format!(
+                "unsupported compression format {format}, only gzip and zstd are supported by this version of alai"
+            );
+            return Err(Error::Artifact("corrupt", String::new(), detail));
+        }
+        Compression::Unknown => {
+            let detail = "it isn't a tar archive, compressed with gzip or zstd or not at all".to_owned();
+            return Err(Error::Artifact("corrupt", String::new(), detail));
+        }
+    };
     let stream = Capped {
-        inner: MultiGzDecoder::new(BufReader::with_capacity(BUFFER, file)),
+        inner,
         budget: budget.clone(),
     };
     let fail = Failure {
         tarball: tarball.to_owned(),
         budget: budget.clone(),
     };
-    Ok((Archive::new(stream), fail))
+    Ok((Archive::new(BufReader::with_capacity(BUFFER, stream)), fail))
+}
+
+enum Compression {
+    Gzip,
+    Zstd,
+    /// A tar archive as it is, by the `ustar` magic every format since v7 has.
+    None,
+    /// One tar is often compressed with that isn't read, by name.
+    Other(&'static str),
+    Unknown,
+}
+
+/// What `head`, the start of a file, is by its magic bytes.
+fn compression(head: &[u8]) -> Compression {
+    const OTHERS: [(&[u8], &str); 3] = [(b"BZh", "bzip2"), (b"\xfd7zXZ\x00", "xz"), (b"\x04\x22\x4d\x18", "lz4")];
+    if head.starts_with(b"\x1f\x8b") {
+        Compression::Gzip
+    } else if head.starts_with(b"\x28\xb5\x2f\xfd") {
+        Compression::Zstd
+    } else if head.len() > 257 && head[257..].starts_with(b"ustar") {
+        Compression::None
+    } else {
+        match OTHERS.iter().find(|(magic, _)| head.starts_with(magic)) {
+            Some((_, name)) => Compression::Other(name),
+            None => Compression::Unknown,
+        }
+    }
 }
 
 /// A member's name as Python's tarfile gives it, without a directory's trailing `/`; None if it isn't UTF-8, so
@@ -289,7 +336,9 @@ const FILES: &str = "FILES.json";
 /// Extract the collection artifact `tarball` into the new directory `dest`, as `ansible-galaxy collection install`
 /// does, and return the namespace, name and version its `MANIFEST.json` gives. With `expected`, those must be them.
 ///
-/// Two passes, as a gzip stream can't be seeked and the last member of a name is the one that counts (`tar -r` appends
+/// The tarball is compressed with gzip, as ansible-galaxy builds one, or with zstd, or not at all.
+///
+/// Two passes, as a compressed stream can't be seeked and the last member of a name is the one that counts (`tar -r` appends
 /// a replacement): the first reads only the headers, for where each name's last member is, and the content of the
 /// last `MANIFEST.json` and `FILES.json`. The files manifest is the one `MANIFEST.json` names, so only another name
 /// costs a pass of its own, for that member. Then both are checked, and every entry the files manifest lists, before

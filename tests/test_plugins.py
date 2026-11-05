@@ -136,6 +136,10 @@ class TestPlugins:
         assert [p.fqcn for p in plugins.search([b"user_user", b"a.a"])] == ["a.a.user_user"]
         assert [p.fqcn for p in plugins.search([b"user"])] == ["a.a.user_user", "a.a.user"]
         assert [p.fqcn for p in plugins.search()] == ["a.a.user_user", "a.a.user", "b.b.other"]
+        # A token in every line, an empty one included, and one only in the last line, which has no newline after it.
+        assert [p.fqcn for p in plugins.search([b"a"])] == ["a.a.user_user", "a.a.user", "b.b.other"]
+        assert [p.fqcn for p in plugins.search([b""])] == ["a.a.user_user", "a.a.user", "b.b.other"]
+        assert [p.fqcn for p in plugins.search([b"other"])] == ["b.b.other"]
 
     def test_unreadable_and_blank_lines_skipped(self) -> None:
         plugins = Plugins(b"\n".join([b"", b"not json user", line("a.a.user"), b"   ", line("b.b.user", v=2)]))
@@ -147,6 +151,11 @@ class TestPlugins:
 
         assert [(p.type, p.fqcn) for p in plugins.named({"copy"})] == [("module", "a.a.copy"), ("filter", "c.c.copy")]
         assert plugins.named(set()) == []
+
+    def test_named_not_by_a_name_in_routing(self) -> None:
+        plugins = Plugins(b"\n".join([line("a.a.old", routing={"name": "copy"}), line("b.b.copy")]))
+
+        assert [p.fqcn for p in plugins.named({"copy"})] == ["b.b.copy"]
 
     def test_names(self) -> None:
         plugins = Plugins(b"\n".join([line("a.a.copy"), line("b.b.user"), b'{"name": "esc\\"aped"}']))

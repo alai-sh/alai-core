@@ -9,6 +9,7 @@ import collections.abc as _c
 import contextlib
 import gzip
 import hashlib
+import importlib
 import io
 import json
 import tarfile
@@ -16,11 +17,20 @@ from pathlib import Path
 
 
 @contextlib.contextmanager
-def _gzipped_tar(buffer: io.BytesIO) -> _c.Generator[tarfile.TarFile]:
-    """A tarball written gzipped to ``buffer``, the same bytes every time: ``w:gz`` stamps the time into the gzip
-    header, so a tarball built again a second later would have another checksum than the one a lock recorded."""
-    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar:
-        yield tar
+def _tar(buffer: io.BytesIO, compression: str) -> _c.Generator[tarfile.TarFile]:
+    """A tarball written to ``buffer`` compressed as ``compression`` says, ``gz``, ``zst`` (Python 3.14 and up) or
+    none for ``""``, the same bytes every time: ``w:gz`` stamps the time into the gzip header, so a tarball built
+    again a second later would have another checksum than the one a lock recorded."""
+    if compression == "gz":
+        with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=0) as gz, tarfile.open(fileobj=gz, mode="w") as tar:
+            yield tar
+    elif compression == "zst":
+        zstd = importlib.import_module("compression.zstd")
+        with zstd.ZstdFile(buffer, "wb") as zst, tarfile.open(fileobj=zst, mode="w") as tar:
+            yield tar
+    else:
+        with tarfile.open(fileobj=buffer, mode="w") as tar:
+            yield tar
 
 
 Member = tuple[tarfile.TarInfo, "bytes | None"]
@@ -62,11 +72,11 @@ def tar_special(name: str, kind: bytes) -> Member:
     return info, None
 
 
-def build_tarball(path: Path, members: list[Member]) -> tuple[str, int]:
-    """Write exactly ``members``, in order, as a gzipped tarball to ``path`` and return its SHA-256 and size; a name
-    given twice is stored twice, as ``tar -r`` appends one."""
+def build_tarball(path: Path, members: list[Member], compression: str = "gz") -> tuple[str, int]:
+    """Write exactly ``members``, in order, as a tarball to ``path``, compressed as ``_tar`` takes it, and return its
+    SHA-256 and size; a name given twice is stored twice, as ``tar -r`` appends one."""
     buffer = io.BytesIO()
-    with _gzipped_tar(buffer) as tar:
+    with _tar(buffer, compression) as tar:
         for info, data in members:
             tar.addfile(info, io.BytesIO(data) if data is not None else None)
     data = buffer.getvalue()

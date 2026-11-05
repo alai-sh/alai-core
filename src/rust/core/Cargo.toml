@@ -10,6 +10,8 @@ publish = false
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 libyaml-safer = "0.3"
 memchr = "2"
+# Without legacy formats and the dictionary builder, which extraction never uses.
+zstd = { version = "0.14", default-features = false }
 ruff_python_ast = "=0.0.20"
 ruff_python_parser = "=0.0.20"
 semver = "1.0.28"

@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "alai-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "flate2",
  "libyaml-safer",
@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "alai-core-py"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "alai-core",
  "pyo3",

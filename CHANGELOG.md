@@ -5,6 +5,8 @@ All notable changes to alai-core are listed here. The format is based on
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Releases
 before 0.1 can change their API in any release.
 
+## [Unreleased]
+
 ## [0.1.0] - 2026-11-05
 
 ### Added

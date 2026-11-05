@@ -58,7 +58,7 @@ impl PluginEntry {
     /// The line as a plugin, or None if it can't be read. It must be a JSON object with a `v` no higher than this
     /// reads, and `type`, `name` and `collection` strings, the collection with one dot.
     pub fn parse(line: &[u8]) -> Option<Self> {
-        let obj = object(line).ok()?;
+        let mut obj = object(line).ok()?;
         if !obj
             .get("v")
             .and_then(Value::as_i64)
@@ -66,7 +66,10 @@ impl PluginEntry {
         {
             return None;
         }
-        let text = |key: &str| obj.get(key).and_then(Value::as_str).map(str::to_owned);
+        let mut text = |key: &str| match obj.remove(key) {
+            Some(Value::String(s)) => Some(s),
+            _ => None,
+        };
         let (kind, name, collection) = (text("type")?, text("name")?, text("collection")?);
         if collection.matches('.').count() != 1 {
             return None;
@@ -75,8 +78,8 @@ impl PluginEntry {
             since: text("since"),
             until: text("until"),
             short_description: text("short_description"),
-            routing: match obj.get("routing") {
-                Some(Value::Object(routing)) => Some(routing.clone()),
+            routing: match obj.remove("routing") {
+                Some(Value::Object(routing)) => Some(routing),
                 _ => None,
             },
             kind,
@@ -155,14 +158,13 @@ pub fn search<'a>(data: &'a [u8], tokens: &[Vec<u8>]) -> Vec<(PluginEntry, &'a [
             .filter_map(read)
             .collect();
     };
+    let first = memmem::Finder::new(first);
     let rest: Vec<_> = rest.iter().map(memmem::Finder::new).collect();
     let mut found = Vec::new();
+    // Searched again from the next line, so a token in most lines is found once per line rather than once per byte.
     let mut at = 0;
-    for hit in memmem::find_iter(data, first) {
-        if hit < at {
-            continue; // in a line already looked at
-        }
-        let (start, end) = line_at(data, hit);
+    while let Some(hit) = data.get(at..).and_then(|unread| first.find(unread)) {
+        let (start, end) = line_at(data, at + hit);
         at = end + 1;
         let line = &data[start..end];
         if rest.iter().all(|token| token.find(line).is_some()) {
@@ -172,7 +174,8 @@ pub fn search<'a>(data: &'a [u8], tokens: &[Vec<u8>]) -> Vec<(PluginEntry, &'a [
     found
 }
 
-/// Every readable line with a `"name": "..."` whose value is one of `names`, each once, with the line it was read from.
+/// Every readable line whose `name` is one of `names`, each once, with the line it was read from. A line is read only
+/// where a `"name": "..."` in it, which may be inside its `routing`, has one of them.
 pub fn named<'a>(data: &'a [u8], names: &HashSet<String>) -> Vec<(PluginEntry, &'a [u8])> {
     let mut found = Vec::new();
     let mut at = 0;
@@ -183,7 +186,11 @@ pub fn named<'a>(data: &'a [u8], names: &HashSet<String>) -> Vec<(PluginEntry, &
         let (start, end) = line_at(data, offset);
         at = end + 1;
         let line = &data[start..end];
-        found.extend(PluginEntry::parse(line).map(|entry| (entry, line)));
+        found.extend(
+            PluginEntry::parse(line)
+                .filter(|entry| names.contains(&entry.name))
+                .map(|entry| (entry, line)),
+        );
     }
     found
 }

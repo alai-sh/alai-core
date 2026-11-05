@@ -668,7 +668,9 @@ def artifact_extract(
     won't make links, as without Developer Mode, what it points to is copied instead.
 
     Args:
-        tarball: The artifact.
+        tarball: The artifact, a tarball compressed with gzip, as ansible-galaxy builds one, or with zstd, or not at
+            all. One compressed another way, such as xz, is refused as ``corrupt``, with the compression named in
+            ``detail``.
         dest: The directory to extract it into, which mustn't exist yet.
         limit: The most it may unpack to, in bytes, counting what a hard link copies and a symlink's checksum reads.
             0 is no limit.
@@ -699,7 +701,7 @@ def artifact_extract_sdist(
     ``artifact_extract``'s. On an error, what was written so far stays in ``dest``, for the caller to remove.
 
     Args:
-        tarball: The sdist, a gzipped tarball.
+        tarball: The sdist, a tarball compressed as ``artifact_extract`` takes one.
         dest: The directory to extract it into, which mustn't exist yet.
         include: What to extract, below the top-level directory. One ending in ``/`` is a directory and everything
             in it, any other a file.

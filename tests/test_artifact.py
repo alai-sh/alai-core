@@ -82,13 +82,16 @@ def outside(sandbox: Path) -> dict[str, str]:
     }
 
 
-def extract(sandbox: Path, members: list[Member], limit: int = LIMIT, via: str = "work") -> dict[str, str]:
+def extract(
+    sandbox: Path, members: list[Member], limit: int = LIMIT, via: str = "work", compression: str = "gz"
+) -> dict[str, str]:
     """Extract ``members`` as ns.coll 1.0.0 and return the collection's tree, checking nothing outside it changed.
-    ``via`` is the directory to extract into, ``work`` or a symlink to it."""
+    ``via`` is the directory to extract into, ``work`` or a symlink to it, and ``compression`` the tarball's, as
+    ``build_tarball`` takes it."""
     shutil.rmtree(sandbox / "work" / "collection", ignore_errors=True)
     before = outside(sandbox)
     tarball = sandbox / "artifact.tar.gz"
-    _ = build_tarball(tarball, members)
+    _ = build_tarball(tarball, members, compression)
     try:
         dest = str(sandbox / via / "collection")
         assert extract_artifact(tarball, dest, limit=limit, expected=EXPECTED) == EXPECTED
@@ -1112,6 +1115,57 @@ def test_unicode_names(sandbox: Path) -> None:
         **{n: f"file 644 {n.encode()!r}" for n in names},
         "l": f"-> {dot * 2}{slash}secret.txt",
     }
+
+
+@pytest.mark.parametrize("compression", ["gz", "zst", ""])
+def test_compressions(sandbox: Path, compression: str) -> None:
+    if compression == "zst":
+        _ = pytest.importorskip("compression.zstd")
+    members = collection(tar_file("a", b"a"), tar_dir("d"), files=[listed("a", b"a"), listed_dir("d")])
+
+    tree = extract(sandbox, members, compression=compression)
+
+    assert (tree["a"], tree["d"]) == ("file 644 b'a'", "dir 755")
+
+
+def test_zstd_frames(sandbox: Path) -> None:
+    """A zstd file of several frames, as joining two gives, with a skippable frame between them."""
+    zstd = pytest.importorskip("compression.zstd")
+    tarball = sandbox / "artifact.tar.gz"
+    _ = build_tarball(tarball, collection(tar_file("a", b"a"), files=[listed("a", b"a")]), compression="")
+    data = tarball.read_bytes()
+    skippable = b"\x50\x2a\x4d\x18" + (4).to_bytes(4, "little") + b"skip"
+    _ = tarball.write_bytes(zstd.compress(data[:1000]) + skippable + zstd.compress(data[1000:]))
+
+    assert extract_artifact(tarball, sandbox / "work" / "collection", expected=EXPECTED) == EXPECTED
+    assert everything(sandbox / "work" / "collection")["a"] == "file 644 b'a'"
+
+    _ = tarball.write_bytes(zstd.compress(data[:1000]) + skippable[:10])
+    with pytest.raises(ExtractError, match="can't extract the artifact: incomplete frame") as e:
+        _ = extract_artifact(tarball, sandbox / "work" / "collection2")
+    assert e.value.kind == "corrupt"
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        (b"BZh91AY&SY" + b"\0" * 32, "unsupported compression format bzip2, only gzip and zstd are supported"),
+        (b"\xfd7zXZ\x00\x00" + b"\0" * 32, "unsupported compression format xz, only gzip and zstd are supported"),
+        (b"\x04\x22\x4d\x18" + b"\0" * 32, "unsupported compression format lz4, only gzip and zstd are supported"),
+        (b"PK\x03\x04" + b"\0" * 32, "it isn't a tar archive, compressed with gzip or zstd or not at all"),
+        (b"\0" * 300, "it isn't a tar archive, compressed with gzip or zstd or not at all"),
+        (b"", "it isn't a tar archive, compressed with gzip or zstd or not at all"),
+    ],
+)
+def test_not_a_tarball(sandbox: Path, data: bytes, message: str) -> None:
+    tarball = sandbox / "artifact.tar.gz"
+    _ = tarball.write_bytes(data)
+
+    with pytest.raises(ExtractError, match=message) as e:
+        _ = extract_artifact(tarball, sandbox / "work" / "collection")
+
+    assert e.value.kind == "corrupt"
+    assert not (sandbox / "work" / "collection").exists()
 
 
 def test_dest_already_there(sandbox: Path) -> None:
